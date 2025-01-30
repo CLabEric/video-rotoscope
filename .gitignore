@@ -1,0 +1,23 @@
+# Dependencies
+node_modules/
+.pnpm-store/
+
+# Testing
+test/
+*.mp4
+
+# Terraform
+.terraform/
+*.tfstate
+*.tfstate.*
+
+# Build outputs
+.next/
+dist/
+build/
+
+# Misc
+.DS_Store
+*.pem
+.env*
+!.env.example
