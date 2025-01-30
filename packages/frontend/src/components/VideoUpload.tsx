@@ -9,21 +9,24 @@ import {
   Video,
 } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { Alert, AlertDescription } from "/components/ui/alert";
+import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Progress } from "@/components/ui/progress";
 
 export default function VideoUpload() {
-  const [videoFile, setVideoFile] = useState(null);
-  const [preview, setPreview] = useState("");
-  const [processedUrl, setProcessedUrl] = useState("");
+  const [videoFile, setVideoFile] = useState<File | null>(null);
+  const [preview, setPreview] = useState<string>("");
+  const [processedUrl, setProcessedUrl] = useState<string>("");
   const [isDragging, setIsDragging] = useState(false);
   const [uploadProgress, setUploadProgress] = useState(0);
   const [isUploading, setIsUploading] = useState(false);
-  const [processingStatus, setProcessingStatus] = useState("uploading");
-  const [uploadedKey, setUploadedKey] = useState(null);
+  const [processingStatus, setProcessingStatus] = useState<
+    "uploading" | "processing" | "completed" | "failed"
+  >("uploading");
+  const [uploadedKey, setUploadedKey] = useState<string | null>(null);
 
   useEffect(() => {
     if (!uploadedKey || processingStatus !== "processing") return;
+
     const checkStatus = async () => {
       try {
         const response = await fetch(`/api/status?key=${uploadedKey}`);
@@ -56,7 +59,7 @@ export default function VideoUpload() {
     return () => clearInterval(interval);
   }, [uploadedKey, processingStatus]);
 
-  const handleDrop = useCallback((e) => {
+  const handleDrop = useCallback((e: React.DragEvent) => {
     e.preventDefault();
     setIsDragging(false);
 
@@ -68,7 +71,7 @@ export default function VideoUpload() {
     }
   }, []);
 
-  const handleUpload = async (file) => {
+  const handleUpload = async (file: File) => {
     try {
       setIsUploading(true);
       setUploadProgress(0);
@@ -172,7 +175,7 @@ export default function VideoUpload() {
         </div>
 
         {/* Status Alert */}
-        <Alert className="mb-6 bg-white border-blue-100 shadow-sm">
+        <Alert className="mb-6 bg-white border-blue-100">
           <AlertCircle className="h-4 w-4 text-blue-500" />
           <AlertDescription className="text-gray-600">
             {getStatusMessage()}
@@ -219,7 +222,7 @@ export default function VideoUpload() {
                   htmlFor="video-upload"
                   className="flex flex-col items-center gap-6 cursor-pointer"
                 >
-                  <div className="p-6 bg-gradient-to-r from-blue-500 to-indigo-500 rounded-full shadow-lg shadow-blue-500/20">
+                  <div className="p-6 bg-gradient-to-r from-blue-500 to-indigo-500 rounded-full shadow-lg">
                     <Upload className="w-10 h-10 text-white" />
                   </div>
                   <div className="text-center">
@@ -263,7 +266,7 @@ export default function VideoUpload() {
                     <span className="w-2 h-2 bg-blue-500 rounded-full"></span>
                     Original Video
                   </h3>
-                  <div className="relative rounded-xl overflow-hidden bg-gray-900 aspect-video shadow-md">
+                  <div className="relative rounded-xl overflow-hidden bg-gray-900 aspect-video">
                     <video
                       src={preview}
                       controls
@@ -277,7 +280,7 @@ export default function VideoUpload() {
                     <span className="w-2 h-2 bg-indigo-500 rounded-full"></span>
                     Processed Video
                   </h3>
-                  <div className="relative rounded-xl overflow-hidden bg-gray-900 aspect-video shadow-md">
+                  <div className="relative rounded-xl overflow-hidden bg-gray-900 aspect-video">
                     {processingStatus === "completed" && processedUrl ? (
                       <video
                         src={processedUrl}
@@ -318,12 +321,7 @@ export default function VideoUpload() {
                     <span>Uploading video...</span>
                     <span>{uploadProgress}%</span>
                   </div>
-                  <div className="h-2 bg-gray-100 rounded-full overflow-hidden shadow-inner">
-                    <div
-                      className="h-full bg-gradient-to-r from-blue-500 to-indigo-500 transition-all duration-300"
-                      style={{ width: `${uploadProgress}%` }}
-                    ></div>
-                  </div>
+                  <Progress value={uploadProgress} className="h-2" />
                 </div>
               )}
             </CardContent>

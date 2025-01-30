@@ -311,7 +311,7 @@ output "processor_role_arn" {
 
 # ECR Repository for container images
 resource "aws_ecr_repository" "video_processor" {
-  name                 = "${var.app_name}-processor"
+  name                 = "video-rotoscope-processor"  # Use the exact name that exists
   image_tag_mutability = "MUTABLE"
 
   image_scanning_configuration {
@@ -433,33 +433,23 @@ resource "aws_ecs_service" "video_processor" {
   }
 }
 
-# Auto Scaling
-resource "aws_appautoscaling_target" "ecs_target" {
-  max_capacity       = 4
-  min_capacity       = 1
-  resource_id        = "service/${aws_ecs_cluster.main.name}/${aws_ecs_service.video_processor.name}"
-  scalable_dimension = "ecs:service:DesiredCount"
-  service_namespace  = "ecs"
-}
-
-# CPU-based scaling
+# Auto Scaling Policy
 resource "aws_appautoscaling_policy" "cpu" {
   name               = "${var.app_name}-cpu-scaling"
   policy_type        = "TargetTrackingScaling"
-  resource_id        = aws_appautoscaling_target.ecs_target.resource_id
-  scalable_dimension = aws_appautoscaling_target.ecs_target.scalable_dimension
-  service_namespace  = aws_appautoscaling_target.ecs_target.service_namespace
+  resource_id        = "service/video-rotoscope-cluster/video-rotoscope-processor"
+  scalable_dimension = "ecs:service:DesiredCount"
+  service_namespace  = "ecs"
 
   target_tracking_scaling_policy_configuration {
-    target_value = 85.0  # Increased from 70%
+    target_value = 85.0
     predefined_metric_specification {
       predefined_metric_type = "ECSServiceAverageCPUUtilization"
     }
-    scale_out_cooldown = 300  # 5 minutes
-    scale_in_cooldown  = 300  # 5 minutes
-    disable_scale_in   = true # Prevents automatic scale in
+    scale_out_cooldown = 300
+    scale_in_cooldown  = 300
+    disable_scale_in   = true
   }
-
 }
 
 # Add to outputs.tf

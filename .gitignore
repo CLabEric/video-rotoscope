@@ -1,15 +1,69 @@
-# Dependencies
+# Node & Next.js
 node_modules/
 .pnpm-store/
+.next/
+.env*.local
+*.pem
+.vercel
+next-env.d.ts
+.DS_Store
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
 
 # Testing
 test/
 *.mp4
 
 # Terraform
-.terraform/
+**/.terraform/*
 *.tfstate
 *.tfstate.*
+crash.log
+crash.*.log
+*.tfvars
+*.tfvars.json
+override.tf
+override.tf.json
+*_override.tf
+*_override.tf.json
+.terraformrc
+terraform.rc
+
+# Logs
+logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+env/
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+*.egg-info/
+.installed.cfg
+*.egg
+.env
 
 # Build outputs
 .next/
@@ -21,3 +75,4 @@ build/
 *.pem
 .env*
 !.env.example
+notes.txt
