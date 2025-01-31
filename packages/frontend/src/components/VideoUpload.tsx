@@ -11,6 +11,13 @@ import {
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Progress } from "@/components/ui/progress";
+import {
+  getUploadUrl,
+  queueProcessing,
+  checkProcessingStatus,
+  type UploadUrlResponse,
+  type ProcessingStatusResponse,
+} from "@/lib/aws";
 
 export default function VideoUpload() {
   const [videoFile, setVideoFile] = useState<File | null>(null);
@@ -71,25 +78,13 @@ export default function VideoUpload() {
     }
   }, []);
 
+  // Update the handleUpload function in VideoUpload.tsx
   const handleUpload = async (file: File) => {
     try {
       setIsUploading(true);
       setUploadProgress(0);
 
-      const response = await fetch("/api/upload", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          filename: file.name,
-          contentType: file.type,
-        }),
-      });
-
-      if (!response.ok) {
-        throw new Error("Failed to get upload URL");
-      }
-
-      const { url, key } = await response.json();
+      const { url, key } = await getUploadUrl(file.name, file.type);
 
       await new Promise((resolve, reject) => {
         const xhr = new XMLHttpRequest();
@@ -115,16 +110,7 @@ export default function VideoUpload() {
         xhr.send(file);
       });
 
-      const processResponse = await fetch("/api/process", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ key }),
-      });
-
-      if (!processResponse.ok) {
-        throw new Error("Failed to queue processing");
-      }
-
+      await queueProcessing(key);
       await new Promise((resolve) => setTimeout(resolve, 500));
 
       setUploadedKey(key);
