@@ -69,6 +69,7 @@ var/
 .next/
 dist/
 build/
+out/
 
 # Misc
 .DS_Store

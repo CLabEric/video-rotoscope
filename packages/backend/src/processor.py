@@ -37,10 +37,6 @@ def inspect_video(filepath, label="Video"):
         logger.error(f"Error inspecting {label.lower()}: {str(e)}")
         return None
 
-
-
-
-
 def run_ffmpeg_command(command):
     """Run ffmpeg command and log output"""
     try:
@@ -53,12 +49,17 @@ def run_ffmpeg_command(command):
         )
         logger.info(f"Command stdout: {result.stdout}")
         logger.info(f"Command stderr: {result.stderr}")
+                # Add these lines for better logging
+        logger.info("FFmpeg stdout: " + result.stdout)
+        logger.info("FFmpeg stderr: " + result.stderr)
         
         if result.returncode != 0:
+            logger.error(f"FFmpeg failed with code {result.returncode}")
             raise Exception(f"FFmpeg command failed: {result.stderr}")
         return result
     except Exception as e:
         logger.error(f"Failed to run command: {str(e)}")
+        logger.error(f"Full exception: {traceback.format_exc()}")
         raise
 
 def process_video(input_path, output_path):
@@ -149,7 +150,6 @@ def process_message(message):
         logger.error(traceback.format_exc())
         raise
 
-
 def check_health():
     try:
         pid = os.getpid()
@@ -163,24 +163,12 @@ def main():
     try:
         logger.info(f"Starting processor with queue URL: {queue_url}")
         logger.info("Container starting...")
-        logger.info("Python version: %s", sys.version)
-        logger.info("Current working directory: %s", os.getcwd())
-        logger.info("Directory contents: %s", os.listdir())
-        logger.info("Process ID: %s", os.getpid())
-        logger.info("AWS Region: %s", os.environ.get('AWS_REGION'))
         
-        # Test SQS connectivity
-        try:
-            queue_attrs = sqs.get_queue_attributes(
-                QueueUrl=queue_url,
-                AttributeNames=['ApproximateNumberOfMessages']
-            )
-            logger.info(f"Queue attributes: {queue_attrs}")
-        except Exception as e:
-            logger.error(f"Failed to get queue attributes: {e}")
+        idle_count = 0
+        MAX_IDLE_COUNT = 3  # Will exit after 3 empty polls
         
         while True:
-            check_health() 
+            check_health()
             try:
                 logger.info("Polling for messages...")
                 response = sqs.receive_message(
@@ -190,6 +178,7 @@ def main():
                 )
                 
                 if 'Messages' in response:
+                    idle_count = 0  # Reset idle counter when message received
                     for message in response['Messages']:
                         try:
                             process_message(message)
@@ -201,6 +190,10 @@ def main():
                             logger.error(f"Message processing error: {e}", exc_info=True)
                 else:
                     logger.info("No messages received")
+                    idle_count += 1
+                    if idle_count >= MAX_IDLE_COUNT:
+                        logger.info(f"No messages received for {MAX_IDLE_COUNT} consecutive polls. Shutting down.")
+                        sys.exit(0)
 
             except Exception as e:
                 logger.error(f"Queue polling error: {e}", exc_info=True)

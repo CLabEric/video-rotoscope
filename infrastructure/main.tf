@@ -103,6 +103,7 @@ resource "aws_s3_bucket_cors_configuration" "video_storage" {
     allowed_methods = ["GET", "HEAD", "PUT", "POST"]
     allowed_origins = [
       "http://localhost:3000",
+      "http://localhost:*",  # Add this
       "https://*.amazonaws.com",
       "https://*.cloudfront.net"
     ]
@@ -334,11 +335,11 @@ resource "aws_cloudwatch_log_group" "video_processor" {
 resource "aws_ecs_task_definition" "video_processor" {
   family                   = "${var.app_name}-processor"
   requires_compatibilities = ["FARGATE"]
-  network_mode            = "awsvpc"
-  cpu                     = "1024"
-  memory                  = "2048"
-  execution_role_arn      = aws_iam_role.video_processor.arn
-  task_role_arn           = aws_iam_role.video_processor.arn
+  network_mode			   = "awsvpc"
+  cpu   				   = "1024"  # 1 vCPU
+  memory 				   = "4096"  # 4GB (increased from 2GB)
+  execution_role_arn       = aws_iam_role.video_processor.arn
+  task_role_arn            = aws_iam_role.video_processor.arn
 
   container_definitions = jsonencode([
     {
@@ -433,23 +434,52 @@ resource "aws_ecs_service" "video_processor" {
   }
 }
 
-# Auto Scaling Policy
-resource "aws_appautoscaling_policy" "cpu" {
-  name               = "${var.app_name}-cpu-scaling"
-  policy_type        = "TargetTrackingScaling"
-  resource_id        = "service/video-rotoscope-cluster/video-rotoscope-processor"
+# Scale up policy
+resource "aws_appautoscaling_policy" "scale_up" {
+  name               = "${var.app_name}-scale-up"
+  policy_type        = "StepScaling"
+  resource_id        = aws_appautoscaling_target.ecs_target.resource_id
+  scalable_dimension = aws_appautoscaling_target.ecs_target.scalable_dimension
+  service_namespace  = aws_appautoscaling_target.ecs_target.service_namespace
+
+  step_scaling_policy_configuration {
+    adjustment_type         = "ExactCapacity"
+    cooldown               = 60
+    metric_aggregation_type = "Maximum"
+
+    step_adjustment {
+      metric_interval_lower_bound = 0
+      scaling_adjustment         = 1
+    }
+  }
+}
+
+# Scale down policy
+resource "aws_appautoscaling_policy" "scale_down" {
+  name               = "${var.app_name}-scale-down"
+  policy_type        = "StepScaling"
+  resource_id        = aws_appautoscaling_target.ecs_target.resource_id
+  scalable_dimension = aws_appautoscaling_target.ecs_target.scalable_dimension
+  service_namespace  = aws_appautoscaling_target.ecs_target.service_namespace
+
+  step_scaling_policy_configuration {
+    adjustment_type         = "ExactCapacity"
+    cooldown               = 60
+    metric_aggregation_type = "Maximum"
+
+    step_adjustment {
+      metric_interval_upper_bound = 0
+      scaling_adjustment         = 0
+    }
+  }
+}
+
+resource "aws_appautoscaling_target" "ecs_target" {
+  max_capacity       = 1
+  min_capacity       = 0
+  resource_id        = "service/${aws_ecs_cluster.main.name}/${aws_ecs_service.video_processor.name}"
   scalable_dimension = "ecs:service:DesiredCount"
   service_namespace  = "ecs"
-
-  target_tracking_scaling_policy_configuration {
-    target_value = 85.0
-    predefined_metric_specification {
-      predefined_metric_type = "ECSServiceAverageCPUUtilization"
-    }
-    scale_out_cooldown = 300
-    scale_in_cooldown  = 300
-    disable_scale_in   = true
-  }
 }
 
 # Add to outputs.tf
@@ -877,4 +907,75 @@ resource "aws_iam_role_policy" "ecs_exec" {
       Resource = "*"
     }]
   })
+}
+
+# Scale up alarm
+resource "aws_cloudwatch_metric_alarm" "queue_not_empty" {
+  alarm_name          = "${var.app_name}-queue-not-empty"
+  comparison_operator = "GreaterThanOrEqualToThreshold"
+  evaluation_periods  = "1"
+  metric_name         = "ApproximateNumberOfMessagesVisible"
+  namespace           = "AWS/SQS"
+  period              = "60"
+  statistic          = "Average"
+  threshold          = "1"
+  alarm_description   = "Scale up when there are messages in the queue"
+  alarm_actions      = [aws_appautoscaling_policy.scale_up.arn]  # This uses the correct ARN reference
+
+  dimensions = {
+    QueueName = aws_sqs_queue.video_processing.name
+  }
+}
+
+# Scale down alarm
+resource "aws_cloudwatch_metric_alarm" "queue_empty" {
+  alarm_name          = "${var.app_name}-queue-empty"
+  comparison_operator = "LessThanOrEqualToThreshold"
+  evaluation_periods  = "2"
+  metric_name         = "ApproximateNumberOfMessagesVisible"
+  namespace           = "AWS/SQS"
+  period              = "300"
+  statistic           = "Maximum"
+  threshold           = "0"
+  alarm_description   = "Scale down when queue is empty"
+  alarm_actions       = [aws_appautoscaling_policy.scale_down.arn]
+
+  dimensions = {
+    QueueName = aws_sqs_queue.video_processing.name
+  }
+}
+
+# AWS Budget for monthly cost tracking
+resource "aws_budgets_budget" "monthly" {
+  name              = "monthly-budget"
+  budget_type       = "COST"
+  limit_amount      = "10"  # Set your desired limit - $10 for example
+  limit_unit        = "USD"
+  time_period_start = "2024-01-01_00:00"
+  time_unit         = "MONTHLY"
+
+  notification {
+    comparison_operator        = "GREATER_THAN"
+    threshold                  = 80
+    threshold_type            = "PERCENTAGE"
+    notification_type         = "ACTUAL"
+    subscriber_email_addresses = ["your-email@example.com"]  # Replace with your email
+  }
+
+  notification {
+    comparison_operator        = "GREATER_THAN"
+    threshold                  = 100
+    threshold_type            = "PERCENTAGE"
+    notification_type         = "ACTUAL"
+    subscriber_email_addresses = ["your-email@example.com"]  # Replace with your email
+  }
+
+  # Alert for forecasted spend
+  notification {
+    comparison_operator        = "GREATER_THAN"
+    threshold                  = 100
+    threshold_type            = "PERCENTAGE"
+    notification_type         = "FORECASTED"
+    subscriber_email_addresses = ["your-email@example.com"]  # Replace with your email
+  }
 }
