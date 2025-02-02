@@ -94,7 +94,6 @@ def process_video(input_path, output_path):
         logger.error(traceback.format_exc())
         raise
 
-# In processor.py
 def process_message(message):
     try:
         body = json.loads(message['Body'])
