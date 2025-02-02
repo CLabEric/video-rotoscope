@@ -94,6 +94,7 @@ def process_video(input_path, output_path):
         logger.error(traceback.format_exc())
         raise
 
+# In processor.py
 def process_message(message):
     try:
         body = json.loads(message['Body'])
@@ -135,6 +136,15 @@ def process_message(message):
                 }
             )
             logger.info("Upload successful")
+
+            # Delete the original input file after successful processing
+            try:
+                logger.info(f"Deleting input file: {clean_key}")
+                s3.delete_object(Bucket=bucket, Key=clean_key)
+                logger.info("Input file deleted successfully")
+            except Exception as e:
+                logger.error(f"Failed to delete input file: {str(e)}")
+                # Don't raise the error since processing was successful
             
         except Exception as e:
             logger.error(f"S3 upload failed: {str(e)}")
