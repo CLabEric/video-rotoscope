@@ -3,213 +3,100 @@ import boto3
 import json
 import sys
 import logging
-import logging.handlers
 from botocore.exceptions import ClientError
-import traceback
 import subprocess
-import shutil
+import traceback
 
 logging.basicConfig(
     level=logging.INFO,
-    format='%(asctime)s [%(levelname)s] %(message)s - %(filename)s:%(lineno)d'
+    format='%(asctime)s [%(levelname)s] %(message)s',
+    handlers=[
+        logging.FileHandler('/var/log/video-processor.log'),
+        logging.StreamHandler(sys.stdout)
+    ]
 )
-logger = logging.getLogger(__name__)
-
-# Initialize AWS clients
-sqs = boto3.client('sqs')
-s3 = boto3.client('s3')
-queue_url = os.environ.get('QUEUE_URL')
-
-def inspect_video(filepath, label="Video"):
-    """Inspect video file and log details"""
-    try:
-        cmd = f'ffprobe -v error -show_format -show_streams -of json "{filepath}"'
-        result = subprocess.run(cmd, shell=True, capture_output=True, text=True)
-        if result.returncode == 0:
-            info = json.loads(result.stdout)
-            logger.info(f"{label} Inspection:")
-            logger.info(json.dumps(info, indent=2))
-            return info
-        else:
-            logger.error(f"Failed to inspect {label.lower()}: {result.stderr}")
-            return None
-    except Exception as e:
-        logger.error(f"Error inspecting {label.lower()}: {str(e)}")
-        return None
-
-def run_ffmpeg_command(command):
-    """Run ffmpeg command and log output"""
-    try:
-        logger.info(f"Running command: {command}")
-        result = subprocess.run(
-            command,
-            capture_output=True,
-            text=True,
-            shell=True
-        )
-        logger.info(f"Command stdout: {result.stdout}")
-        logger.info(f"Command stderr: {result.stderr}")
-                # Add these lines for better logging
-        logger.info("FFmpeg stdout: " + result.stdout)
-        logger.info("FFmpeg stderr: " + result.stderr)
-        
-        if result.returncode != 0:
-            logger.error(f"FFmpeg failed with code {result.returncode}")
-            raise Exception(f"FFmpeg command failed: {result.stderr}")
-        return result
-    except Exception as e:
-        logger.error(f"Failed to run command: {str(e)}")
-        logger.error(f"Full exception: {traceback.format_exc()}")
-        raise
+logger = logging.getLogger()
 
 def process_video(input_path, output_path):
     try:
-        logger.info("*** RUNNING VERSION WITH MP4 CONTAINER ***")
-        
         command = (
             f'ffmpeg -y -i "{input_path}" '
             f'-vf "format=gray,edgedetect=mode=colormix:high=0.9:low=0.1" '
-            f'-c:v libx264 '
-            f'-profile:v baseline '
-            f'-preset medium '
-            f'-pix_fmt yuv420p '
-            f'-movflags +faststart '
-            f'-f mp4 '  # Force MP4 format
-            f'-map 0:v:0 '  # Only map video stream
-            f'-an '  # No audio
-            f'"{output_path}"'
+            f'-c:v libx264 -preset medium -pix_fmt yuv420p '
+            f'-movflags +faststart -f mp4 "{output_path}"'
         )
         
         logger.info(f"Running ffmpeg command: {command}")
-        result = run_ffmpeg_command(command)
-        logger.info(f"ffmpeg output: {result.stdout}")
+        result = subprocess.run(command, shell=True, capture_output=True, text=True)
         
-        # Verify the container format
-        verify_cmd = f'ffprobe -v error -show_format -show_streams "{output_path}"'
-        verify_result = run_ffmpeg_command(verify_cmd)
-        logger.info(f"Output format details: {verify_result.stdout}")
-
+        if result.returncode != 0:
+            raise Exception(f"FFmpeg failed: {result.stderr}")
+            
+        logger.info("Video processing completed successfully")
+        
     except Exception as e:
-        logger.error(f"Error in process_video: {str(e)}")
-        logger.error(traceback.format_exc())
+        logger.error(f"Error processing video: {str(e)}")
         raise
 
-def process_message(message):
-    try:
-        body = json.loads(message['Body'])
-        logger.info(f"Processing message: {json.dumps(body, indent=2)}")
-
-        bucket = body['bucket']
-        input_key = body['input_key']
-        output_key = body['output_key']
-
-        input_path = '/tmp/input.mp4'
-        output_path = '/tmp/output.mp4'
-
-        try:
-            clean_key = input_key.replace(f"{bucket}/", "").lstrip("/")
-            logger.info(f"Attempting download with cleaned key: {clean_key}")
-            
-            s3.head_object(Bucket=bucket, Key=clean_key)
-            s3.download_file(bucket, clean_key, input_path)
-            logger.info("Download successful!")
-            
-        except Exception as e:
-            logger.error(f"S3 download failed: {str(e)}")
-            logger.error(traceback.format_exc())
-            raise
-
-        process_video(input_path, output_path)
-
-        try:
-            logger.info(f"Uploading to S3: {bucket}/{output_key}")
-            clean_output_key = output_key.replace(f"{bucket}/", "").lstrip("/")
-            
-            s3.upload_file(
-                output_path, 
-                bucket, 
-                clean_output_key,
-                ExtraArgs={
-                    'ContentType': 'video/mp4',
-                    'ContentDisposition': 'inline'
-                }
-            )
-            logger.info("Upload successful")
-
-            # Delete the original input file after successful processing
-            try:
-                logger.info(f"Deleting input file: {clean_key}")
-                s3.delete_object(Bucket=bucket, Key=clean_key)
-                logger.info("Input file deleted successfully")
-            except Exception as e:
-                logger.error(f"Failed to delete input file: {str(e)}")
-                # Don't raise the error since processing was successful
-            
-        except Exception as e:
-            logger.error(f"S3 upload failed: {str(e)}")
-            logger.error(traceback.format_exc())
-            raise
-
-        os.remove(input_path)
-        os.remove(output_path)
-        logger.info("Message processed successfully")
-
-    except Exception as e:
-        logger.error(f"Message processing failed: {str(e)}")
-        logger.error(traceback.format_exc())
-        raise
-
-def check_health():
-    try:
-        pid = os.getpid()
-        logger.info(f"Health check running, PID: {pid}")
-        return True
-    except Exception as e:
-        logger.error(f"Health check failed: {e}")
-        return False
-    
 def main():
-    try:
-        logger.info(f"Starting processor with queue URL: {queue_url}")
-        logger.info("Container starting...")
-        
-        idle_count = 0
-        MAX_IDLE_COUNT = 3  # Will exit after 3 empty polls
-        
-        while True:
-            check_health()
-            try:
-                logger.info("Polling for messages...")
-                response = sqs.receive_message(
-                    QueueUrl=queue_url,
-                    MaxNumberOfMessages=1,
-                    WaitTimeSeconds=20
-                )
+    logger.info("Video processor starting...")
+    sqs = boto3.client('sqs')
+    s3 = boto3.client('s3')
+    queue_url = os.environ['QUEUE_URL']
+    
+    while True:
+        try:
+            logger.info("Polling for messages...")
+            response = sqs.receive_message(
+                QueueUrl=queue_url,
+                MaxNumberOfMessages=1,
+                WaitTimeSeconds=20
+            )
+            
+            if 'Messages' in response:
+                for message in response['Messages']:
+                    try:
+                        logger.info(f"Processing message: {message['MessageId']}")
+                        body = json.loads(message['Body'])
+                        
+                        # Download input video
+                        input_path = '/tmp/input.mp4'
+                        output_path = '/tmp/output.mp4'
+                        s3.download_file(body['bucket'], body['input_key'], input_path)
+                        logger.info("Downloaded input video")
+                        
+                        # Process video
+                        process_video(input_path, output_path)
+                        
+                        # Upload result
+                        s3.upload_file(
+                            output_path, 
+                            body['bucket'], 
+                            body['output_key'],
+                            ExtraArgs={'ContentType': 'video/mp4'}
+                        )
+                        logger.info("Uploaded processed video")
+                        
+                        # Clean up
+                        os.remove(input_path)
+                        os.remove(output_path)
+                        
+                        # Delete message
+                        sqs.delete_message(
+                            QueueUrl=queue_url,
+                            ReceiptHandle=message['ReceiptHandle']
+                        )
+                        logger.info("Processing completed successfully")
+                        
+                    except Exception as e:
+                        logger.error(f"Error processing message: {str(e)}")
+                        logger.error(traceback.format_exc())
+            else:
+                logger.info("No messages received")
                 
-                if 'Messages' in response:
-                    idle_count = 0  # Reset idle counter when message received
-                    for message in response['Messages']:
-                        try:
-                            process_message(message)
-                            sqs.delete_message(
-                                QueueUrl=queue_url,
-                                ReceiptHandle=message['ReceiptHandle']
-                            )
-                        except Exception as e:
-                            logger.error(f"Message processing error: {e}", exc_info=True)
-                else:
-                    logger.info("No messages received")
-                    idle_count += 1
-                    if idle_count >= MAX_IDLE_COUNT:
-                        logger.info(f"No messages received for {MAX_IDLE_COUNT} consecutive polls. Shutting down.")
-                        sys.exit(0)
-
-            except Exception as e:
-                logger.error(f"Queue polling error: {e}", exc_info=True)
-                
-    except Exception as e:
-        logger.error(f"Fatal error: {e}", exc_info=True)
-        raise
+        except Exception as e:
+            logger.error(f"Error in main loop: {str(e)}")
+            logger.error(traceback.format_exc())
 
 if __name__ == "__main__":
     main()
