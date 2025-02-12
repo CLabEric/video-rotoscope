@@ -32,6 +32,7 @@ override.tf.json
 *_override.tf.json
 .terraformrc
 terraform.rc
+docs.md
 
 # Logs
 logs

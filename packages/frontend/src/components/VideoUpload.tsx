@@ -10,6 +10,7 @@ import {
 } from "@/lib/aws";
 import EffectSelector from "./EffectSelector";
 import Footer from "./Footer";
+import ProcessedVideoDisplay from './ProcessedVideoDisplay';
 
 export default function VideoUpload() {
   const [videoFile, setVideoFile] = useState<File | null>(null);
@@ -20,8 +21,8 @@ export default function VideoUpload() {
   const [isUploading, setIsUploading] = useState(false);
   const [selectedEffect, setSelectedEffect] = useState("edge");
   const [processingStatus, setProcessingStatus] = useState<
-    "uploading" | "processing" | "completed" | "failed"
-  >("uploading");
+    "processing" | "completed" | "failed"
+  >("processing");
   const [currentKey, setCurrentKey] = useState<string>("");  // Add this state
 
   const handleDrop = useCallback((e: React.DragEvent) => {
@@ -69,7 +70,7 @@ export default function VideoUpload() {
     try {
       setIsUploading(true);
       setUploadProgress(0);
-      setProcessingStatus("uploading");
+      setProcessingStatus("processing");
 
       const { url, key } = await getUploadUrl(file.name, file.type);
       setCurrentKey(key);  // Save the key
@@ -250,14 +251,11 @@ export default function VideoUpload() {
               </div>
 
               {/* Processed Video */}
-              <div className="bg-white rounded-3xl overflow-hidden border border-orange-100 shadow-lg w-full">
-                <div className="bg-orange-50 p-3 sm:p-4 border-b border-orange-100">
-                  <h3 className="text-base sm:text-lg font-bold text-orange-900">
-                    Processed Video
-                  </h3>
-                </div>
-				{renderSwitch(processingStatus)}
-              </div>
+				{/* Replace the existing processed video section with */}
+				<ProcessedVideoDisplay 
+				videoUrl={processedUrl}
+				processingStatus={processingStatus}
+				/>
             </div>
           )}
         </div>

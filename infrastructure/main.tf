@@ -45,7 +45,7 @@ resource "aws_s3_bucket_cors_configuration" "video" {
   }
 }
 
-# Update the video bucket policy to allow uploads
+# Update the video bucket policy to reflect lifecycle rules
 resource "aws_s3_bucket_policy" "video" {
   bucket = aws_s3_bucket.video.id
   policy = jsonencode({
@@ -76,13 +76,13 @@ resource "aws_s3_bucket_policy" "video" {
         Action   = "s3:GetObject"
         Resource = "${aws_s3_bucket.video.arn}/*"
       },
-	  {
-		Sid       = "AllowPublicReadForProcessedVideos"
-		Effect    = "Allow"
-		Principal = "*"
-		Action    = "s3:GetObject"
-		Resource  = "${aws_s3_bucket.video.arn}/processed/*"
-	  }
+      {
+        Sid       = "AllowPublicReadForProcessedVideos"
+        Effect    = "Allow"
+        Principal = "*"
+        Action    = "s3:GetObject"
+        Resource  = "${aws_s3_bucket.video.arn}/processed/*"
+      }
     ]
   })
 }
@@ -201,6 +201,7 @@ resource "aws_iam_role_policy" "processor_policy" {
         Action = [
           "s3:GetObject",
           "s3:PutObject",
+		  "s3:DeleteObject",
           "s3:ListBucket"
         ]
         Resource = [
@@ -230,6 +231,7 @@ data "aws_availability_zones" "available" {
   state = "available"
 }
 
+# EC2 Spot Instance Configuration
 resource "aws_spot_instance_request" "video_processor" {
   ami                    = "ami-0c104f6f4a5d9d1d5"  # Amazon Linux 2 AMI ID
   instance_type          = "t3.medium"
@@ -237,231 +239,16 @@ resource "aws_spot_instance_request" "video_processor" {
   spot_type             = "persistent"
   wait_for_fulfillment  = true
   instance_interruption_behavior = "stop"
-#   availability_zone = data.aws_availability_zones.available.names[0]
   iam_instance_profile = aws_iam_instance_profile.video_processor.name
-  vpc_security_group_ids = [aws_security_group.video_processor.id]  # Change from security_groups
-
-  # Add this block to specify the subnet
-  subnet_id = "subnet-008674d77d1c4577c"  # Replace with your desired subnet ID
-
-  # Add this block to assign a public IP
+  vpc_security_group_ids = [aws_security_group.video_processor.id]
+  subnet_id = "subnet-008674d77d1c4577c"
   associate_public_ip_address = true
 
-user_data = base64encode(<<-EOF
-    #!/bin/bash
-    
-    # Update system and install development tools
-    yum update -y
-    yum groupinstall -y "Development Tools"
-    yum install -y autoconf automake bzip2 cmake freetype-devel gcc gcc-c++ git libtool make mercurial pkgconfig zlib-devel nasm python3-pip yasm
-
-    # Create build directory
-    cd /tmp
-    mkdir -p ffmpeg_sources
-    
-    # Install x264 first
-    cd ffmpeg_sources
-    git clone --depth 1 https://code.videolan.org/videolan/x264.git
-    cd x264
-    ./configure --prefix="/usr/local" --enable-static --enable-shared
-    make
-    make install
-    
-    # Update library cache
-    echo "/usr/local/lib" > /etc/ld.so.conf.d/local.conf
-    ldconfig
-
-    # Now install FFmpeg with x264 support
-    cd /tmp/ffmpeg_sources
-    wget https://ffmpeg.org/releases/ffmpeg-4.2.4.tar.bz2
-    tar xjf ffmpeg-4.2.4.tar.bz2
-    cd ffmpeg-4.2.4
-    PKG_CONFIG_PATH="/usr/local/lib/pkgconfig" ./configure --prefix=/usr/local \
-                --enable-gpl \
-                --enable-nonfree \
-                --enable-libx264 \
-                --enable-shared \
-                --extra-cflags="-I/usr/local/include" \
-                --extra-ldflags="-L/usr/local/lib"
-    make
-    make install
-    ldconfig
-
-    # Verify library path
-    echo "export LD_LIBRARY_PATH=/usr/local/lib:$LD_LIBRARY_PATH" >> /etc/profile
-    source /etc/profile
-
-    # Install Python dependencies
-    pip3 install boto3
-
-    # Create processor directory
-    mkdir -p /opt/video-processor
-    cd /opt/video-processor
-
-    # Create processor script
-    cat > processor.py << 'PYTHON'
-import os
-import boto3
-import json
-import sys
-import logging
-import subprocess
-import traceback
-from botocore.exceptions import ClientError
-
-# Set up logging
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s [%(levelname)s] %(message)s',
-    handlers=[
-        logging.FileHandler('/var/log/video-processor.log'),
-        logging.StreamHandler(sys.stdout)
-    ]
-)
-logger = logging.getLogger()
-
-def process_video(input_path, output_path):
-    """Process video using FFmpeg with edge detection"""
-    try:
-        command = (
-            f'ffmpeg -y -i "{input_path}" '
-            f'-vf "format=gray,edgedetect=mode=colormix:high=0.9:low=0.1" '
-            f'-c:v libx264 '
-            f'-pix_fmt yuv420p '
-            f'-f mp4 '
-            f'"{output_path}"'
-        )
-        
-        logger.info(f"Running FFmpeg command: {command}")
-        
-        result = subprocess.run(
-            command, 
-            shell=True, 
-            capture_output=True, 
-            text=True, 
-            check=True
-        )
-        
-        logger.info(f"FFmpeg stdout: {result.stdout}")
-        logger.info(f"FFmpeg stderr: {result.stderr}")
-        
-        return True
-    except subprocess.CalledProcessError as e:
-        logger.error(f"FFmpeg processing failed: {e}")
-        logger.error(f"Stdout: {e.stdout}")
-        logger.error(f"Stderr: {e.stderr}")
-        return False
-
-def main():
-    logger.info("Video processor starting...")
-    
-    # Initialize AWS clients
-    sqs = boto3.client('sqs')
-    s3 = boto3.client('s3')
-    
-    queue_url = os.environ.get('QUEUE_URL')
-    bucket_name = os.environ.get('BUCKET_NAME')
-    
-    logger.info(f"Using queue URL: {queue_url}")
-    logger.info(f"Using bucket name: {bucket_name}")
-    
-    while True:
-        try:
-            logger.info("Polling for messages...")
-            response = sqs.receive_message(
-                QueueUrl=queue_url,
-                MaxNumberOfMessages=1,
-                WaitTimeSeconds=20
-            )
-            
-            if 'Messages' in response:
-                for message in response['Messages']:
-                    try:
-                        body = json.loads(message['Body'])
-                        logger.info(f"Processing message: {json.dumps(body, indent=2)}")
-                        
-                        bucket = body['bucket']
-                        input_key = body['input_key']
-                        output_key = body['output_key']
-                        
-                        # Create unique temp paths
-                        input_path = f'/tmp/input_{os.path.basename(input_key)}'
-                        output_path = f'/tmp/output_{os.path.basename(output_key)}'
-                        
-                        try:
-                            # Download input file
-                            logger.info(f"Downloading from s3://{bucket}/{input_key}")
-                            s3.download_file(bucket, input_key, input_path)
-                            logger.info(f"Downloaded input file: {input_path}")
-                            
-                            # Process video
-                            if process_video(input_path, output_path):
-                                # Upload processed file
-                                logger.info(f"Uploading to s3://{bucket}/{output_key}")
-                                s3.upload_file(
-                                    output_path, 
-                                    bucket, 
-                                    output_key,
-                                    ExtraArgs={
-                                        'ContentType': 'video/mp4',
-                                        'ContentDisposition': 'inline'
-                                    }
-                                )
-                                logger.info(f"Uploaded processed file: {output_key}")
-                                
-                                # Delete message from queue
-                                sqs.delete_message(
-                                    QueueUrl=queue_url,
-                                    ReceiptHandle=message['ReceiptHandle']
-                                )
-                                logger.info("Deleted message from queue")
-                                
-                            else:
-                                logger.error("Video processing failed")
-                                raise Exception("Video processing failed")
-                                
-                        except Exception as e:
-                            logger.error(f"Processing error: {str(e)}")
-                            raise
-                            
-                        finally:
-                            # Cleanup temp files
-                            if os.path.exists(input_path):
-                                os.remove(input_path)
-                            if os.path.exists(output_path):
-                                os.remove(output_path)
-                            
-                    except Exception as process_error:
-                        logger.error(f"Error processing message: {str(process_error)}")
-                        logger.error(traceback.format_exc())
-                        
-            else:
-                logger.info("No messages received")
-                
-        except Exception as e:
-            logger.error(f"Error in main loop: {str(e)}")
-            logger.error(traceback.format_exc())
-
-if __name__ == "__main__":
-    main()
-PYTHON
-
-    # Make processor script executable
-    chmod +x processor.py
-
-    # Create log file
-    touch /var/log/video-processor.log
-    chmod 666 /var/log/video-processor.log
-
-    # Start processor
-    export AWS_DEFAULT_REGION=us-east-1
-    export QUEUE_URL=https://sqs.us-east-1.amazonaws.com/273354635152/video-rotoscope-video-processing
-    export BUCKET_NAME=video-rotoscope-video
-    cd /opt/video-processor
-    export LD_LIBRARY_PATH=/usr/local/lib:$LD_LIBRARY_PATH
-    nohup python3 processor.py >> /var/log/video-processor.log 2>&1 &
-EOF
-)
+  # Remove the data.template_file reference and use templatefile directly
+  user_data = base64encode(templatefile("${path.module}/scripts/user-data.sh.tftpl", {
+    queue_url    = aws_sqs_queue.video_processing.url
+    bucket_name  = aws_s3_bucket.video.id
+  }))
 
   tags = {
     Name = "${var.app_name}-processor"
@@ -485,6 +272,26 @@ resource "aws_security_group" "video_processor" {
 resource "aws_iam_role_policy_attachment" "ssm" {
   role       = aws_iam_role.video_processor.name
   policy_arn = "arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore"
+}
+
+# Add lifecycle configuration for video bucket
+resource "aws_s3_bucket_lifecycle_configuration" "video_lifecycle" {
+  bucket = aws_s3_bucket.video.id
+
+  rule {
+    id     = "delete_processed_videos"
+    status = "Enabled"
+
+    # Only apply to processed videos
+    filter {
+      prefix = "processed/"
+    }
+
+    # Delete processed videos after 24 hours
+    expiration {
+      days = 1
+    }
+  }
 }
 
 # resource "aws_cloudfront_invalidation" "processed_videos" {
