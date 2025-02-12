@@ -18,9 +18,9 @@
 
 
 # Outputs (outputs.tf)
-output "frontend_cloudfront_domain" {
-  value = aws_cloudfront_distribution.frontend.domain_name
-}
+# output "frontend_cloudfront_domain" {
+#   value = aws_cloudfront_distribution.frontend.domain_name
+# }
 
 output "video_bucket_name" {
   value = aws_s3_bucket.video.id

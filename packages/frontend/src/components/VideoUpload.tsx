@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState, useCallback } from "react";
+import React, { useState, useCallback, useEffect } from "react";  // Add useEffect
 import { Upload, BrainCircuit } from "lucide-react";
 import { Progress } from "@/components/ui/progress";
 import {
@@ -22,6 +22,7 @@ export default function VideoUpload() {
   const [processingStatus, setProcessingStatus] = useState<
     "uploading" | "processing" | "completed" | "failed"
   >("uploading");
+  const [currentKey, setCurrentKey] = useState<string>("");  // Add this state
 
   const handleDrop = useCallback((e: React.DragEvent) => {
     e.preventDefault();
@@ -35,16 +36,44 @@ export default function VideoUpload() {
     }
   }, []);
 
+  useEffect(() => {
+    const checkStatus = async () => {
+      if (!currentKey) return;
+      
+      try {
+        const result = await checkProcessingStatus(currentKey);
+        console.log('Processing check result:', result);
+
+        setProcessedUrl(result.key);
+        if (result.status === "completed") {
+          setProcessingStatus("completed");
+        }
+      } catch (error) {
+        console.error('Error checking status:', error);
+      }
+    };
+
+    let intervalId: NodeJS.Timeout;
+    if (processingStatus === "processing") {
+      intervalId = setInterval(checkStatus, 5000);
+    }
+
+    return () => {
+      if (intervalId) {
+        clearInterval(intervalId);
+      }
+    };
+  }, [processingStatus, currentKey]);
+
   const handleUpload = async (file: File) => {
     try {
       setIsUploading(true);
       setUploadProgress(0);
       setProcessingStatus("uploading");
 
-      // Get presigned URL for upload
       const { url, key } = await getUploadUrl(file.name, file.type);
+      setCurrentKey(key);  // Save the key
 
-      // Upload to S3 with progress tracking
       const xhr = new XMLHttpRequest();
 
       xhr.upload.onprogress = (event) => {
@@ -54,7 +83,6 @@ export default function VideoUpload() {
         }
       };
 
-      // Create a Promise to handle the XHR upload
       await new Promise((resolve, reject) => {
         xhr.open("PUT", url, true);
         xhr.setRequestHeader("Content-Type", file.type);
@@ -71,34 +99,9 @@ export default function VideoUpload() {
         xhr.send(file);
       });
 
-      // Queue for processing
       await queueProcessing(key);
       setProcessingStatus("processing");
 
-      const checkStatus = async () => {
-        try {
-          const result = await checkProcessingStatus(key);
-          console.log("Processing status:", result);
-
-          if (result.status === "completed") {
-            setProcessingStatus("completed");
-            const url = `https://${process.env.NEXT_PUBLIC_S3_BUCKET_NAME}.s3.amazonaws.com/${result.key}`;
-            console.log("Setting processed URL to:", url);
-            setProcessedUrl(url);
-          } else {
-            // Wait longer between checks
-            await new Promise((resolve) => setTimeout(resolve, 5000));
-            checkStatus();
-          }
-        } catch (error) {
-          console.error("Error checking status:", error);
-          // Wait before retrying
-          await new Promise((resolve) => setTimeout(resolve, 5000));
-          checkStatus();
-        }
-      };
-
-      checkStatus();
     } catch (error) {
       console.error("Upload error:", error);
       setProcessingStatus("failed");
@@ -107,13 +110,43 @@ export default function VideoUpload() {
     }
   };
 
-  const handleReset = () => {
-    setVideoFile(null);
-    setPreview("");
-    setProcessedUrl("");
-    setUploadProgress(0);
-    setProcessingStatus("uploading");
-  };
+  	const renderSwitch = (param: string) => {
+		switch(param) {
+			case 'processing':
+				return (
+					<div className="bg-orange-50 aspect-video flex flex-col items-center justify-center text-orange-700">
+						<div className="animate-spin rounded-full h-12 w-12 sm:h-16 sm:w-16 border-t-2 border-orange-500 mb-2 sm:mb-4"></div>
+						<p className="font-semibold text-sm sm:text-base">
+							Applying AI edge detection. This may take a few minutes...
+						</p>
+					</div>
+				);
+
+			case 'completed':
+				return (
+					<>
+						<video
+							src={processedUrl}
+							onError={(e) => console.log('Video error:', e)}
+							controls
+							className="w-full aspect-video object-contain bg-orange-50"
+						/>
+					</>
+				);
+			case 'failed':
+				return (
+					<div className="bg-orange-50 aspect-video flex items-center justify-center text-red-500 font-semibold text-sm sm:text-base">
+						Processing Failed
+					</div>
+				);
+			default:
+				return (
+					<div className="bg-orange-50 aspect-video flex items-center justify-center text-red-500 font-semibold text-sm sm:text-base">
+						Processing...
+					</div>
+				);
+		}
+	}
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-amber-50 via-orange-50 to-red-50 p-4 sm:p-8 font-['Libre_Baskerville'] flex flex-col">
@@ -223,24 +256,7 @@ export default function VideoUpload() {
                     Processed Video
                   </h3>
                 </div>
-                {processingStatus === "processing" ? (
-                  <div className="bg-orange-50 aspect-video flex flex-col items-center justify-center text-orange-700">
-                    <div className="animate-spin rounded-full h-12 w-12 sm:h-16 sm:w-16 border-t-2 border-orange-500 mb-2 sm:mb-4"></div>
-                    <p className="font-semibold text-sm sm:text-base">
-                      Applying AI edge detection...
-                    </p>
-                  </div>
-                ) : processingStatus === "completed" ? (
-                  <video
-                    src={processedUrl}
-                    controls
-                    className="w-full aspect-video object-contain bg-orange-50"
-                  />
-                ) : (
-                  <div className="bg-orange-50 aspect-video flex items-center justify-center text-red-500 font-semibold text-sm sm:text-base">
-                    Processing Failed
-                  </div>
-                )}
+				{renderSwitch(processingStatus)}
               </div>
             </div>
           )}
