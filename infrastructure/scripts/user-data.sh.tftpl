@@ -103,27 +103,17 @@ def process_video(input_path, output_path):
         command = (
             f'ffmpeg -y -i "{input_path}" '
             f'-vf "'
-            # Convert to black & white with high contrast
-            f'format=gray,'
-            f'eq=contrast=1.5:brightness=-0.1,'
-            
-            # Add film grain and damage
-            f'noise=alls=40:allf=t+p,'  # Heavier grain
-            
-            # Simulate old film speed
-            f'fps=18,'
+            # Start with basic effects we know work
+            f'format=gray,'  # Convert to black and white
+            f'eq=contrast=1.5:brightness=-0.1,'  # Adjust contrast
+            f'noise=alls=40:allf=t,'  # Add film grain
+            f'fps=18,'  # Adjust frame rate
             f'setpts=0.9*PTS,'  # Speed up slightly
-            
-            # Add shake effect
-            f'crop=iw-6:ih-6:\'3+random(1)*6\':\'3+random(1)*6\','
-            
-            # Add flicker
-            f'eq=brightness=\'0.1+random(1)*0.15-0.075\':contrast=\'1.0+random(1)*0.3\','
-            
-            # Add lens effects
-            f'gblur=sigma=1.2,'
-            f'unsharp=3:3:1.5:3:3:0.0,'  # Selective sharpening
-            f'vignette=PI/3:a=0.7'  # Strong vignette
+            f'gblur=sigma=1.2,'  # Add blur
+            f'vignette=PI/8,'  # Much lighter vignette
+            f'crop=iw-6:ih-6:\'3+random(1)*4\':\'3+random(1)*4\','  # Random shake
+            f'eq=brightness=\'0.1+random(1)*0.15-0.075\':'  # Add flicker
+            f'contrast=\'1.0+random(1)*0.3\''  # Random contrast'  # Strong vignette
             f'" '
             f'-c:v libx264 '
             f'-pix_fmt yuv420p '
