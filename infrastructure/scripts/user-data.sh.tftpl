@@ -1,9 +1,17 @@
 #!/bin/bash
 
-# Update system and install development tools
 yum update -y
+amazon-linux-extras install -y epel
+
+# Install FFmpeg and development packages
+yum -y install ffmpeg ffmpeg-devel
+
 yum groupinstall -y "Development Tools"
-yum install -y autoconf automake bzip2 cmake freetype-devel gcc gcc-c++ git libtool make mercurial pkgconfig zlib-devel nasm python3-pip yasm
+
+yum install -y autoconf automake bzip2 bzip2-devel cmake freetype-devel gcc gcc-c++ git libtool \
+    make mercurial pkgconfig zlib-devel nasm yasm libdrm-devel \
+    texinfo wget libX11-devel libXext-devel libXfixes-devel libass-devel \
+    SDL2-devel lame-devel opus-devel libvpx-devel x264-devel libvorbis-devel
 
 # Create build directory
 cd /tmp
@@ -22,15 +30,25 @@ echo "/usr/local/lib" > /etc/ld.so.conf.d/local.conf
 ldconfig
 
 # Install FFmpeg with x264 support
+# Install FFmpeg with x264 support
 cd /tmp/ffmpeg_sources
-wget https://ffmpeg.org/releases/ffmpeg-4.2.4.tar.bz2
-tar xjf ffmpeg-4.2.4.tar.bz2
-cd ffmpeg-4.2.4
+wget https://ffmpeg.org/releases/ffmpeg-5.1.tar.bz2
+tar xjf ffmpeg-5.1.tar.bz2
+cd ffmpeg-5.1
+
 PKG_CONFIG_PATH="/usr/local/lib/pkgconfig" ./configure --prefix=/usr/local \
             --enable-gpl \
             --enable-nonfree \
             --enable-libx264 \
             --enable-shared \
+            --enable-filters \
+            --enable-postproc \
+            --enable-avfilter \
+            --enable-libass \
+            --enable-libfreetype \
+            --enable-libvorbis \
+            --enable-libvpx \
+            --enable-version3 \
             --extra-cflags="-I/usr/local/include" \
             --extra-ldflags="-L/usr/local/lib"
 make
@@ -47,6 +65,8 @@ pip3 install boto3
 # Create processor directory
 mkdir -p /opt/video-processor
 cd /opt/video-processor
+
+export PATH=/usr/local/bin:$PATH
 
 # Create processor script
 cat > processor.py << 'PYTHON'
@@ -73,12 +93,42 @@ logger = logging.getLogger()
 def process_video(input_path, output_path):
     """Process video using FFmpeg with edge detection"""
     try:
+        # Create a more dramatic vintage effect with:
+        # 1. Stronger sepia tone
+        # 2. Random frame shaking
+        # 3. Heavy film grain and scratches
+        # 4. Stronger vignette
+        # 5. Flickering effect
+        # 6. Blurred edges
         command = (
             f'ffmpeg -y -i "{input_path}" '
-            f'-vf "format=gray,edgedetect=mode=colormix:high=0.9:low=0.1" '
+            f'-vf "'
+            # Convert to black & white with high contrast
+            f'format=gray,'
+            f'eq=contrast=1.5:brightness=-0.1,'
+            
+            # Add film grain and damage
+            f'noise=alls=40:allf=t+p,'  # Heavier grain
+            
+            # Simulate old film speed
+            f'fps=18,'
+            f'setpts=0.9*PTS,'  # Speed up slightly
+            
+            # Add shake effect
+            f'crop=iw-6:ih-6:\'3+random(1)*6\':\'3+random(1)*6\','
+            
+            # Add flicker
+            f'eq=brightness=\'0.1+random(1)*0.15-0.075\':contrast=\'1.0+random(1)*0.3\','
+            
+            # Add lens effects
+            f'gblur=sigma=1.2,'
+            f'unsharp=3:3:1.5:3:3:0.0,'  # Selective sharpening
+            f'vignette=PI/3:a=0.7'  # Strong vignette
+            f'" '
             f'-c:v libx264 '
             f'-pix_fmt yuv420p '
-            f'-f mp4 '
+            f'-preset medium '
+            f'-an '
             f'"{output_path}"'
         )
         
