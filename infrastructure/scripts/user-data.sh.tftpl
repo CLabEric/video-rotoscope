@@ -91,30 +91,45 @@ logging.basicConfig(
 logger = logging.getLogger()
 
 def process_video(input_path, output_path):
-    """Process video using FFmpeg with edge detection"""
+    """Process video to match Chaplin/Keaton silent comedy film style"""
     try:
-        # Create a more dramatic vintage effect with:
-        # 1. Stronger sepia tone
-        # 2. Random frame shaking
-        # 3. Heavy film grain and scratches
-        # 4. Stronger vignette
-        # 5. Flickering effect
-        # 6. Blurred edges
         command = (
             f'ffmpeg -y -i "{input_path}" '
             f'-vf "'
-            # Start with basic effects we know work
-            f'format=gray,'  # Convert to black and white
-            f'eq=contrast=1.5:brightness=-0.1,'  # Adjust contrast
-            f'noise=alls=40:allf=t,'  # Add film grain
-            f'fps=18,'  # Adjust frame rate
-            f'setpts=0.9*PTS,'  # Speed up slightly
-            f'gblur=sigma=1.2,'  # Add blur
-            f'vignette=PI/8,'  # Much lighter vignette
-            f'crop=iw-6:ih-6:\'3+random(1)*4\':\'3+random(1)*4\','  # Random shake
-            f'eq=brightness=\'0.1+random(1)*0.15-0.075\':'  # Add flicker
-            f'contrast=\'1.0+random(1)*0.3\''  # Random contrast'  # Strong vignette
+            # True black and white conversion
+            f'format=gray,'
+            
+            # Brighter high contrast look
+            f'curves=master=\'0/0 0.25/0.2 0.75/0.85 1/1\','  # Less crushed blacks, more mid-tones
+            f'eq=contrast=1.2:brightness=0.1,'  # Increased brightness, slightly lower contrast
+            
+            # Silent era frame rate and speed
+            f'fps=18,'
+            f'setpts=0.75*PTS,'
+            
+            # Dramatic camera jitter
+            f'crop=iw-16:ih-16:\'8+random(1)*12\':\'8+random(1)*9\','
+            
+            # Film damage effects
+            f'noise=c0s=15:c1s=15:c2s=15:allf=p:all_seed=9500,'
+                        
+            # Flicker effect (reduced darkness in flicker)
+            f'eq=brightness=\'0.1+random(1)*0.2-0.1\':contrast=\'1.0+random(1)*0.3\','
+            
+            # Frame jump simulation
+            f'crop=iw:ih-4:0:\'mod(n,24)\','
+            
+            # Slight blur for lens simulation
+            f'gblur=sigma=0.5,'
+            
+            # Less aggressive vignette
+            f'vignette=PI/4,'  # Reduced from PI/3.5
+            
+            # Final light dust
+            f'noise=alls=8:allf=t:all_seed=5000'
             f'" '
+            
+            # Output settings
             f'-c:v libx264 '
             f'-pix_fmt yuv420p '
             f'-preset medium '
@@ -128,12 +143,14 @@ def process_video(input_path, output_path):
             command, 
             shell=True, 
             capture_output=True, 
-            text=True, 
-            check=True
+            text=True
         )
         
+        if result.returncode != 0:
+            logger.error(f"FFmpeg stderr: {result.stderr}")
+            raise subprocess.CalledProcessError(result.returncode, command, result.stdout, result.stderr)
+            
         logger.info(f"FFmpeg stdout: {result.stdout}")
-        logger.info(f"FFmpeg stderr: {result.stderr}")
         
         return True
     except subprocess.CalledProcessError as e:
@@ -146,8 +163,8 @@ def main():
     logger.info("Video processor starting...")
     
     # Initialize AWS clients
-    sqs = boto3.client('sqs')
-    s3 = boto3.client('s3')
+    sqs = boto3.client('sqs', region_name='us-east-1')
+    s3 = boto3.client('s3', region_name='us-east-1')
     
     queue_url = "${queue_url}"
     bucket_name = "${bucket_name}"
