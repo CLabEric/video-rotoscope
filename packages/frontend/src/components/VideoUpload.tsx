@@ -2,7 +2,7 @@
 import React, { useState, useCallback } from "react";
 import { Upload, BrainCircuit } from "lucide-react";
 import { Progress } from "@/components/ui/progress";
-import { getUploadUrl, queueProcessing } from "@/lib/aws";
+import { getUploadUrl, queueProcessing, checkProcessingStatus } from "@/lib/aws";
 import EffectSelector from "./EffectSelector";
 import Footer from "./Footer";
 import VideoDisplay from "./VideoDisplay";
@@ -14,7 +14,7 @@ export default function VideoUpload() {
   const [isDragging, setIsDragging] = useState(false);
   const [uploadProgress, setUploadProgress] = useState(0);
   const [isUploading, setIsUploading] = useState(false);
-  const [selectedEffect, setSelectedEffect] = useState("edge");
+  const [selectedEffect, setSelectedEffect] = useState("silent-movie");
   const [isProcessing, setIsProcessing] = useState(false);
 
   const handleUpload = async (file: File) => {
@@ -47,7 +47,33 @@ export default function VideoUpload() {
       });
 
       setIsProcessing(true);
-      await queueProcessing(key);
+      
+      // Queue processing with selected effect
+      await queueProcessing(key, selectedEffect);
+
+      // Start polling for completion
+      const checkStatus = async () => {
+        try {
+          const status = await checkProcessingStatus(key);
+          console.log('Processing status:', status);
+          
+          if (status.status === "completed") {
+            setProcessedUrl(status.key);
+            setIsProcessing(false);
+            return;
+          }
+          
+          // Continue polling if not complete
+          setTimeout(checkStatus, 2000);
+        } catch (error) {
+          console.error('Error checking status:', error);
+          setTimeout(checkStatus, 2000);
+        }
+      };
+
+      // Start the polling
+      checkStatus();
+      
     } catch (error) {
       console.error("Upload error:", error);
       setIsProcessing(false);
@@ -66,6 +92,10 @@ export default function VideoUpload() {
     }
   }, []);
 
+  const handleEffectChange = (effectId: string) => {
+    setSelectedEffect(effectId);
+  };
+
   return (
     <div className="min-h-screen flex flex-col bg-gradient-to-br from-amber-50 via-orange-50 to-red-50">
       {/* Header */}
@@ -75,7 +105,7 @@ export default function VideoUpload() {
             <h1 className="text-xl sm:text-2xl font-bold text-orange-900">Edge Detect Studio</h1>
             <div className="flex items-center gap-2 bg-orange-50 text-orange-800 px-2 py-1 sm:px-3 sm:py-2 rounded-lg">
               <BrainCircuit className="w-4 h-4 sm:w-5 sm:h-5 text-orange-600" />
-              <span className="text-xs sm:text-sm">AI-Powered Edge Detection</span>
+              <span className="text-xs sm:text-sm">AI-Powered Video Effects</span>
             </div>
           </div>
         </div>
@@ -112,7 +142,7 @@ export default function VideoUpload() {
           <div className={`w-full max-w-lg mx-auto transition-all duration-500 ease-in-out ${!videoFile ? 'scale-100 opacity-100' : 'scale-95 opacity-0 pointer-events-none absolute inset-0'}`}>
             <EffectSelector
               selectedEffect={selectedEffect}
-              onEffectChange={setSelectedEffect}
+              onEffectChange={handleEffectChange}
             />
             
             <div
