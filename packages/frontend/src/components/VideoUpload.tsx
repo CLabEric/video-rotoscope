@@ -1,5 +1,5 @@
 "use client";
-import React, { useState, useCallback } from "react";
+import React, { useState, useCallback, useEffect } from "react";
 import { Upload, BrainCircuit } from "lucide-react";
 import { Progress } from "@/components/ui/progress";
 import { getUploadUrl, queueProcessing, checkProcessingStatus } from "@/lib/aws";
@@ -17,70 +17,73 @@ export default function VideoUpload() {
   const [selectedEffect, setSelectedEffect] = useState("silent-movie");
   const [isProcessing, setIsProcessing] = useState(false);
 
-  const handleUpload = async (file: File) => {
-    try {
-      // First set up the video preview
-      const previewUrl = URL.createObjectURL(file);
-      setPreview(previewUrl);
-      setVideoFile(file);
-      
-      // Start the upload process
-      setIsUploading(true);
-      setUploadProgress(0);
-      
-      const { url, key } = await getUploadUrl(file.name, file.type);
+	const handleUpload = async (file: File) => {
+		try {
+		// First set up the video preview
+		const previewUrl = URL.createObjectURL(file);
+		setPreview(previewUrl);
+		setVideoFile(file);
+		
+		// Start the upload process
+		setIsUploading(true);
+		setUploadProgress(0);
+		
+		const { url, key } = await getUploadUrl(file.name, file.type);
 
-      const xhr = new XMLHttpRequest();
-      xhr.upload.onprogress = (event) => {
-        if (event.lengthComputable) {
-          const percentComplete = (event.loaded / event.total) * 100;
-          setUploadProgress(Math.round(percentComplete));
-        }
-      };
+		const xhr = new XMLHttpRequest();
+		xhr.upload.onprogress = (event) => {
+			if (event.lengthComputable) {
+			const percentComplete = (event.loaded / event.total) * 100;
+			setUploadProgress(Math.round(percentComplete));
+			}
+		};
 
-      await new Promise((resolve, reject) => {
-        xhr.open("PUT", url, true);
-        xhr.setRequestHeader("Content-Type", file.type);
-        xhr.onload = () => xhr.status === 200 ? resolve(xhr.response) : reject();
-        xhr.onerror = () => reject();
-        xhr.send(file);
-      });
+		await new Promise((resolve, reject) => {
+			xhr.open("PUT", url, true);
+			xhr.setRequestHeader("Content-Type", file.type);
+			xhr.onload = () => xhr.status === 200 ? resolve(xhr.response) : reject();
+			xhr.onerror = () => reject();
+			xhr.send(file);
+		});
 
-      setIsProcessing(true);
-      
-      // Queue processing with selected effect
-      await queueProcessing(key, selectedEffect);
+		setIsProcessing(true);
+		
+		// Reset processed URL when starting new processing
+		setProcessedUrl("");
+		
+		// Queue processing with selected effect
+		await queueProcessing(key, selectedEffect);
 
-      // Start polling for completion
-      const checkStatus = async () => {
-        try {
-          const status = await checkProcessingStatus(key);
-          console.log('Processing status:', status);
-          
-          if (status.status === "completed") {
-            setProcessedUrl(status.key);
-            setIsProcessing(false);
-            return;
-          }
-          
-          // Continue polling if not complete
-          setTimeout(checkStatus, 2000);
-        } catch (error) {
-          console.error('Error checking status:', error);
-          setTimeout(checkStatus, 2000);
-        }
-      };
+		// Start polling for completion
+		const checkStatus = async () => {
+			try {
+			const status = await checkProcessingStatus(key);
+			console.log('Processing status:', status);
+			
+			if (status.status === "completed") {
+				setProcessedUrl(status.key);
+				setIsProcessing(false);
+				return;
+			}
+			
+			// Continue polling if not complete
+			setTimeout(checkStatus, 2000);
+			} catch (error) {
+			console.error('Error checking status:', error);
+			setTimeout(checkStatus, 2000);
+			}
+		};
 
-      // Start the polling
-      checkStatus();
-      
-    } catch (error) {
-      console.error("Upload error:", error);
-      setIsProcessing(false);
-    } finally {
-      setIsUploading(false);
-    }
-  };
+		// Start the polling
+		checkStatus();
+		
+		} catch (error) {
+		console.error("Upload error:", error);
+		setIsProcessing(false);
+		} finally {
+		setIsUploading(false);
+		}
+	};
 
   const handleDrop = useCallback((e: React.DragEvent) => {
     e.preventDefault();
@@ -95,6 +98,15 @@ export default function VideoUpload() {
   const handleEffectChange = (effectId: string) => {
     setSelectedEffect(effectId);
   };
+
+  // Debug log to track state changes
+  useEffect(() => {
+    console.log("State updated:", { 
+      isProcessing, 
+      processedUrl, 
+      hasVideoFile: !!videoFile 
+    });
+  }, [isProcessing, processedUrl, videoFile]);
 
   return (
     <div className="min-h-screen flex flex-col bg-gradient-to-br from-amber-50 via-orange-50 to-red-50">
@@ -118,10 +130,14 @@ export default function VideoUpload() {
           <div className={`w-full transition-all duration-500 ease-in-out ${videoFile ? 'scale-100 opacity-100' : 'scale-95 opacity-0 pointer-events-none absolute inset-0'}`}>
             {videoFile && (
               <div className="pb-8">
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                  <VideoDisplay type="original" videoUrl={preview} />
-                  <VideoDisplay type="processed" videoUrl={processedUrl} isProcessing={isProcessing} />
-                </div>
+				<div className="grid grid-cols-1 md:grid-cols-2 gap-4 md:items-start">
+				<div className="flex-shrink-0">
+					<VideoDisplay type="original" videoUrl={preview} />
+				</div>
+				<div className="flex-shrink-0">
+					<VideoDisplay type="processed" videoUrl={processedUrl} isProcessing={isProcessing} />
+				</div>
+				</div>
 
                 <div className="h-[68px] mt-4">
                   {isUploading && (

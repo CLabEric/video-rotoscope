@@ -1,6 +1,5 @@
 #!/bin/bash
 
-# Keep all the existing package installation and setup
 yum update -y
 amazon-linux-extras install -y epel
 
@@ -68,6 +67,10 @@ cd /opt/video-processor
 
 export PATH=/usr/local/bin:$PATH
 
+# Download the video effects module
+aws s3 cp s3://${bucket_name}/video_effects.py /opt/video-processor/video_effects.py
+chmod +x /opt/video-processor/video_effects.py
+
 # Create processor script
 cat > processor.py << 'PYTHON'
 import os
@@ -90,61 +93,20 @@ logging.basicConfig(
 )
 logger = logging.getLogger()
 
-def get_ffmpeg_command(input_path: str, output_path: str, effect_type: str) -> str:
-    """Get the appropriate FFmpeg command based on the effect type"""
-    
-    if effect_type == "silent-movie":
-        return (
-            f'ffmpeg -y -i "{input_path}" '
-            f'-vf "'
-            # True black and white conversion
-            f'format=gray,'
-            # Brighter high contrast look
-            f'curves=master=\'0/0 0.25/0.2 0.75/0.85 1/1\','
-            f'eq=contrast=1.2:brightness=0.1,'
-            # Silent era frame rate and speed
-            f'fps=18,'
-            f'setpts=0.75*PTS,'
-            # Dramatic camera jitter
-            f'crop=iw-16:ih-16:\'8+random(1)*12\':\'8+random(1)*9\','
-            # Film damage effects
-            f'noise=c0s=15:c1s=15:c2s=15:allf=p:all_seed=9500,'
-            # Flicker effect
-            f'eq=brightness=\'0.1+random(1)*0.2-0.1\':contrast=\'1.0+random(1)*0.3\','
-            # Frame jump simulation
-            f'crop=iw:ih-4:0:\'mod(n,24)\','
-            # Slight blur for lens simulation
-            f'gblur=sigma=0.5,'
-            # Less aggressive vignette
-            f'vignette=PI/4,'
-            # Final light dust
-            f'noise=alls=8:allf=t:all_seed=5000'
-            f'" '
-            # Output settings
-            f'-c:v libx264 '
-            f'-pix_fmt yuv420p '
-            f'-preset medium '
-            f'-an '
-            f'"{output_path}"'
-        )
-    elif effect_type == "high-contrast":
-        return (
-            f'ffmpeg -y -i "{input_path}" '
-            f'-vf "'
-            f'eq=contrast=2:brightness=0.1,' # Increase contrast dramatically
-            f'unsharp=5:5:1.5:5:5:0.0,' # Sharpen edges
-            f'noise=c0s=1:c1s=1' # Add slight noise
-            f'" '
-            f'-c:v libx264 -pix_fmt yuv420p -preset medium "{output_path}"'
-        )
-    else:
-        raise ValueError(f"Unknown effect type: {effect_type}")
+# Import video effects
+sys.path.append("/opt/video-processor")
+try:
+    from video_effects import get_effect_command
+    logger.info("Successfully imported video_effects module")
+except ImportError as e:
+    logger.error(f"Failed to import video_effects module: {str(e)}")
+    sys.exit(1)
 
-def process_video(input_path: str, output_path: str, effect_type: str) -> bool:
+def process_video(input_path, output_path, effect_type):
     """Process video with the specified effect"""
     try:
-        command = get_ffmpeg_command(input_path, output_path, effect_type)
-        logger.info(f"Running FFmpeg command: {command}")
+        command = get_effect_command(input_path, output_path, effect_type)
+        logger.info(f"Running FFmpeg command for effect: {effect_type}")
         
         result = subprocess.run(
             command, 

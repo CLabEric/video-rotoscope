@@ -57,9 +57,9 @@ const effects: Effect[] = [
     ),
   },
   {
-    id: "high-contrast",
-    name: "High Contrast",
-    description: "Dramatic high contrast effect with enhanced edges",
+    id: "grindhouse",
+    name: "Grindhouse",
+    description: "Dramatic 70s exploitation film effect with film damage and warm tones",
     preview: () => (
       <svg viewBox="0 0 160 90" className="w-full h-full">
         <defs>

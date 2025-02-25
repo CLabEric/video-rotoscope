@@ -1,8 +1,8 @@
 import { AlertCircle } from 'lucide-react';
 
-const StorageNotice = () => {
+export const StorageNotice = () => {
   return (
-    <div className="mt-4 bg-orange-50 border border-orange-200 rounded-lg p-4 flex items-start gap-3">
+    <div className="bg-orange-50 border border-orange-200 rounded-lg p-3 flex items-start gap-3 mt-3">
       <AlertCircle className="w-5 h-5 text-orange-600 flex-shrink-0 mt-0.5" />
       <div>
         <h4 className="text-sm font-semibold text-orange-900 mb-1">
@@ -16,5 +16,3 @@ const StorageNotice = () => {
     </div>
   );
 };
-
-export default StorageNotice;
