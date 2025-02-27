@@ -53,13 +53,17 @@ const effects: Effect[] = [
           <stop offset="100%" stopColor="rgba(0,0,0,0.5)"/>
         </radialGradient>
         <rect width="160" height="90" fill="url(#vignette)"/>
+        
+        {/* Vertical scratches */}
+        <line x1="35" y1="0" x2="35" y2="90" stroke="white" strokeWidth="1" opacity="0.3" />
+        <line x1="120" y1="0" x2="120" y2="90" stroke="white" strokeWidth="2" opacity="0.2" />
       </svg>
     ),
   },
   {
     id: "grindhouse",
     name: "Grindhouse",
-    description: "Dramatic 70s exploitation film effect with film damage and warm tones",
+    description: "Gritty, vintage exploitation film look with scratches",
     preview: () => (
       <svg viewBox="0 0 160 90" className="w-full h-full">
         <defs>
@@ -81,6 +85,59 @@ const effects: Effect[] = [
           <circle cx="80" cy="45" r="25" fill="#808080"/>
           <rect x="30" y="35" width="100" height="40" rx="5" fill="#a0a0a0"/>
         </g>
+        
+        {/* Vertical scratches */}
+        <line x1="55" y1="0" x2="55" y2="90" stroke="white" strokeWidth="1" opacity="0.4" />
+        <line x1="140" y1="0" x2="140" y2="90" stroke="white" strokeWidth="2" opacity="0.3" />
+      </svg>
+    ),
+  },
+  {
+    id: "technicolor",
+    name: "Technicolor",
+    description: "Vibrant saturated colors like early color films",
+    preview: () => (
+      <svg viewBox="0 0 160 90" className="w-full h-full">
+        <defs>
+          <filter id="technicolor">
+            <feColorMatrix type="matrix" 
+              values="1.3 0.1 0.1 0 0
+                      0.1 1.1 0.1 0 0
+                      0.1 0.1 1.4 0 0
+                      0   0   0   1 0"/>
+            <feComponentTransfer>
+              <feFuncR type="linear" slope="1.2" intercept="0"/>
+              <feFuncG type="linear" slope="1.1" intercept="0"/>
+              <feFuncB type="linear" slope="1.3" intercept="0"/>
+            </feComponentTransfer>
+            <feGaussianBlur stdDeviation="0.3"/>
+          </filter>
+          <pattern id="grain" x="0" y="0" width="100" height="100" patternUnits="userSpaceOnUse">
+            <image href="data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAUAAAAFCAYAAACNbyblAAAALElEQVQIW2NkQAP/////z4gsBhYAAZggTADGBgGYIEwAxgYBmCBMAMYGAQB9fxQC7vz4EwAAAABJRU5ErkJggg==" x="0" y="0" width="100" height="100"/>
+          </pattern>
+        </defs>
+        
+        {/* Background */}
+        <rect width="160" height="90" fill="#1a1a1a"/>
+        
+        {/* Sample scene with technicolor effect */}
+        <g filter="url(#technicolor)">
+          <circle cx="80" cy="45" r="25" fill="#e05050"/>
+          <rect x="30" y="35" width="100" height="40" rx="5" fill="#50a0e0"/>
+        </g>
+        
+        {/* Film grain overlay */}
+        <rect width="160" height="90" fill="url(#grain)" opacity="0.07"/>
+        
+        {/* Vignette effect */}
+        <radialGradient id="tech-vignette" cx="50%" cy="50%" r="65%">
+          <stop offset="0%" stopColor="transparent"/>
+          <stop offset="100%" stopColor="rgba(0,0,0,0.3)"/>
+        </radialGradient>
+        <rect width="160" height="90" fill="url(#tech-vignette)"/>
+        
+        {/* Vertical scratch */}
+        <line x1="95" y1="0" x2="95" y2="90" stroke="white" strokeWidth="1" opacity="0.3" />
       </svg>
     ),
   }
@@ -97,7 +154,7 @@ const EffectSelector: React.FC<EffectSelectorProps> = ({
         <h3 className="text-lg font-semibold text-gray-900">Choose Effect</h3>
       </div>
 
-      <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+      <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
         {effects.map((effect) => (
           <div key={effect.id} className="flex flex-col">
             <button

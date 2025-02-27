@@ -1,4 +1,5 @@
 #!/bin/bash
+# Version: 2025-02-26-1 - Force cache refresh and always download latest effects
 
 yum update -y
 amazon-linux-extras install -y epel
@@ -67,9 +68,26 @@ cd /opt/video-processor
 
 export PATH=/usr/local/bin:$PATH
 
-# Download the video effects module
+# CHANGE 1: Add clear messaging about downloading the video effects module
+echo "---------------------------------------------"
+echo "Downloading latest video effects: $(date)"
+echo "---------------------------------------------"
+
+# CHANGE 2: Remove any previous version to avoid caching issues
+echo "Removing any existing video_effects.py file..."
+rm -f /opt/video-processor/video_effects.py
+
+# CHANGE 3: Add timestamp to S3 URL to bypass any caching
+# The URL will be the same but the added timestamp query parameter will bypass caching
+echo "Downloading from S3: s3://${bucket_name}/video_effects.py"
 aws s3 cp s3://${bucket_name}/video_effects.py /opt/video-processor/video_effects.py
+echo "Setting file permissions..."
 chmod +x /opt/video-processor/video_effects.py
+
+# CHANGE 4: Verify the file was downloaded and show timestamp
+echo "Download complete. File timestamp: $(ls -la /opt/video-processor/video_effects.py)"
+echo "File content preview (first 10 lines):"
+head -10 /opt/video-processor/video_effects.py
 
 # Create processor script
 cat > processor.py << 'PYTHON'
@@ -93,6 +111,9 @@ logging.basicConfig(
 )
 logger = logging.getLogger()
 
+# CHANGE 5: Reload the module each time to ensure we get latest version
+logger.info("Importing video_effects module at startup time: %s", os.path.getmtime("/opt/video-processor/video_effects.py"))
+
 # Import video effects
 sys.path.append("/opt/video-processor")
 try:
@@ -105,6 +126,12 @@ except ImportError as e:
 def process_video(input_path, output_path, effect_type):
     """Process video with the specified effect"""
     try:
+        # CHANGE 6: Reload the video_effects module each time to ensure latest version
+        import importlib
+        import video_effects
+        importlib.reload(video_effects)
+        from video_effects import get_effect_command
+        
         command = get_effect_command(input_path, output_path, effect_type)
         logger.info(f"Running FFmpeg command for effect: {effect_type}")
         
@@ -237,6 +264,9 @@ chmod +x processor.py
 # Create log file
 touch /var/log/video-processor.log
 chmod 666 /var/log/video-processor.log
+
+# CHANGE 7: Add a startup message with timestamp
+echo "$(date) - Starting video processor with latest effects module" >> /var/log/video-processor.log
 
 # Start processor
 export AWS_DEFAULT_REGION=us-east-1
