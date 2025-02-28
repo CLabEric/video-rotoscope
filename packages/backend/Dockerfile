@@ -1,25 +1,24 @@
-FROM python:3.11-slim
-ARG TARGETARCH=amd64
-ARG TARGETOS=linux
-
-# Install system dependencies including FFmpeg
-RUN apt-get update && \
-    apt-get install -y --no-install-recommends \
-    ffmpeg \
-    libsm6 \
-    libxext6 \
-    procps \
-    && rm -rf /var/lib/apt/lists/*
+FROM nvidia/cuda:11.8.0-cudnn8-runtime-ubuntu22.04
 
 # Set working directory
 WORKDIR /app
 
-# Copy requirements and install dependencies
+# Install system dependencies
+RUN apt-get update && apt-get install -y \
+    python3 \
+    python3-pip \
+    ffmpeg \
+    libsm6 \
+    libxext6 \
+    libgl1 \
+    && rm -rf /var/lib/apt/lists/*
+
+# Copy requirements first for better caching
 COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt boto3
+RUN pip3 install --no-cache-dir -r requirements.txt
 
-# Copy source files
-COPY src /app/src
+# Copy the rest of the application
+COPY . .
 
-# Run the processor
-CMD ["python", "src/processor.py"]
+# Set the entrypoint
+ENTRYPOINT ["python3", "src/main.py"]

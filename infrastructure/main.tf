@@ -233,9 +233,9 @@ data "aws_availability_zones" "available" {
 
 # EC2 Spot Instance Configuration
 resource "aws_spot_instance_request" "video_processor" {
-  ami                    = "ami-0c104f6f4a5d9d1d5"  # Amazon Linux 2 AMI ID
-  instance_type          = "t3.medium"
-  spot_price            = "0.02"
+  ami                    = "ami-0c104f6f4a5d9d1d5"  # Replace with Deep Learning AMI with CUDA
+  instance_type          = "g4dn.xlarge"  # GPU-enabled instance
+  spot_price            = "0.5"  # Adjust price accordingly for g4dn.xlarge
   spot_type             = "persistent"
   wait_for_fulfillment  = true
   instance_interruption_behavior = "stop"
