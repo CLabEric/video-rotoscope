@@ -64,8 +64,8 @@ resource "aws_s3_bucket_policy" "video" {
         Sid       = "AllowDirectUpload"
         Effect    = "Allow"
         Principal = "*"
-        Action   = "s3:PutObject"
-        Resource = "${aws_s3_bucket.video.arn}/uploads/*"
+        Action    = "s3:PutObject"
+        Resource  = "${aws_s3_bucket.video.arn}/uploads/*"
       },
       {
         Sid       = "CloudFrontReadAccess"
@@ -82,9 +82,92 @@ resource "aws_s3_bucket_policy" "video" {
         Principal = "*"
         Action    = "s3:GetObject"
         Resource  = "${aws_s3_bucket.video.arn}/processed/*"
+      },
+      {
+        Sid       = "AllowInstanceAccessToEffects"
+        Effect    = "Allow"
+        Principal = {
+          AWS = aws_iam_role.video_processor.arn
+        }
+        Action   = "s3:GetObject"
+        Resource = "${aws_s3_bucket.video.arn}/effects/*"
       }
     ]
   })
+}
+
+# Create a directory structure for effects in the video bucket
+resource "aws_s3_object" "effects_core_dir" {
+  bucket = aws_s3_bucket.video.id
+  key    = "effects/core/"
+  content_type = "application/x-directory"
+  source = "/dev/null"  # Empty content
+}
+
+resource "aws_s3_object" "effects_ffmpeg_dir" {
+  bucket = aws_s3_bucket.video.id
+  key    = "effects/ffmpeg/"
+  content_type = "application/x-directory"
+  source = "/dev/null"  # Empty content
+}
+
+resource "aws_s3_object" "effects_neural_dir" {
+  bucket = aws_s3_bucket.video.id
+  key    = "effects/neural/"
+  content_type = "application/x-directory"
+  source = "/dev/null"  # Empty content
+}
+
+# Upload the effect core module
+resource "aws_s3_object" "effect_core_module" {
+  bucket = aws_s3_bucket.video.id
+  key    = "effects/core/effect_core.py"
+  source = "${path.module}/effects/core/effect_core.py"
+  etag   = filemd5("${path.module}/effects/core/effect_core.py")
+  content_type = "text/x-python"
+}
+
+# Upload the processor script
+resource "aws_s3_object" "processor_script" {
+  bucket = aws_s3_bucket.video.id
+  key    = "effects/processor.py"
+  source = "${path.module}/effects/processor.py"
+  etag   = filemd5("${path.module}/effects/processor.py")
+  content_type = "text/x-python"
+}
+
+# Upload the effects manifest
+resource "aws_s3_object" "effects_manifest" {
+  bucket = aws_s3_bucket.video.id
+  key    = "effects/manifest.json"
+  source = "${path.module}/effects/manifest.json"
+  etag   = filemd5("${path.module}/effects/manifest.json")
+  content_type = "application/json"
+}
+
+# Upload effect modules
+resource "aws_s3_object" "silent_movie_effect" {
+  bucket = aws_s3_bucket.video.id
+  key    = "effects/ffmpeg/silent_movie.py"
+  source = "${path.module}/effects/ffmpeg/silent_movie.py"
+  etag   = filemd5("${path.module}/effects/ffmpeg/silent_movie.py")
+  content_type = "text/x-python"
+}
+
+resource "aws_s3_object" "grindhouse_effect" {
+  bucket = aws_s3_bucket.video.id
+  key    = "effects/ffmpeg/grindhouse.py"
+  source = "${path.module}/effects/ffmpeg/grindhouse.py"
+  etag   = filemd5("${path.module}/effects/ffmpeg/grindhouse.py")
+  content_type = "text/x-python"
+}
+
+resource "aws_s3_object" "technicolor_effect" {
+  bucket = aws_s3_bucket.video.id
+  key    = "effects/ffmpeg/technicolor.py"
+  source = "${path.module}/effects/ffmpeg/technicolor.py"
+  etag   = filemd5("${path.module}/effects/ffmpeg/technicolor.py")
+  content_type = "text/x-python"
 }
 
 # CloudFront distribution
@@ -201,7 +284,7 @@ resource "aws_iam_role_policy" "processor_policy" {
         Action = [
           "s3:GetObject",
           "s3:PutObject",
-		  "s3:DeleteObject",
+          "s3:DeleteObject",
           "s3:ListBucket"
         ]
         Resource = [
@@ -214,7 +297,8 @@ resource "aws_iam_role_policy" "processor_policy" {
         Action = [
           "sqs:ReceiveMessage",
           "sqs:DeleteMessage",
-          "sqs:GetQueueAttributes"
+          "sqs:GetQueueAttributes",
+          "sqs:ChangeMessageVisibility"
         ]
         Resource = [aws_sqs_queue.video_processing.arn]
       }
