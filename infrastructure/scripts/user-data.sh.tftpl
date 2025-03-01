@@ -61,7 +61,8 @@ echo "export LD_LIBRARY_PATH=/usr/local/lib:$LD_LIBRARY_PATH" >> /etc/profile
 source /etc/profile
 
 # Install Python dependencies
-pip3 install boto3
+pip3 install --upgrade pip
+pip3 install boto3 torch torchvision opencv-python-headless numpy pillow ffmpeg-python tqdm pyyaml
 
 # Create processor directory structure
 mkdir -p /opt/video-processor

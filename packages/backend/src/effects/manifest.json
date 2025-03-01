@@ -1,0 +1,70 @@
+{
+  "version": "1.0.0",
+  "updated": "2025-03-01",
+  "effects": {
+    "silent-movie": {
+      "name": "Silent Movie",
+      "description": "Classic black and white silent film effect with vintage artifacts",
+      "type": "ffmpeg",
+      "path": "ffmpeg/silent_movie.py",
+      "version": "1.0.0",
+      "requirements": ["ffmpeg"],
+      "parameters": {}
+    },
+    "grindhouse": {
+      "name": "Grindhouse",
+      "description": "Gritty, vintage exploitation film look with scratches",
+      "type": "ffmpeg",
+      "path": "ffmpeg/grindhouse.py",
+      "version": "1.0.0",
+      "requirements": ["ffmpeg"],
+      "parameters": {}
+    },
+    "technicolor": {
+      "name": "Technicolor",
+      "description": "Vibrant saturated colors like early color films",
+      "type": "ffmpeg",
+      "path": "ffmpeg/technicolor.py",
+      "version": "1.0.0",
+      "requirements": ["ffmpeg"],
+      "parameters": {}
+    },
+    "scanner-darkly": {
+      "name": "Scanner Darkly",
+      "description": "Neural network-based rotoscoping effect like 'A Scanner Darkly' movie",
+      "type": "neural",
+      "path": "neural/scanner_darkly.py",
+      "version": "1.0.0",
+      "requirements": ["ffmpeg", "opencv", "pytorch"],
+      "parameters": {
+        "edge_strength": {
+          "type": "float",
+          "default": 0.8,
+          "min": 0.1,
+          "max": 1.0,
+          "description": "Strength of edge detection"
+        },
+        "edge_thickness": {
+          "type": "float",
+          "default": 1.5,
+          "min": 0.5,
+          "max": 3.0,
+          "description": "Thickness of edges"
+        },
+        "color_method": {
+          "type": "choice",
+          "default": "kmeans",
+          "options": ["kmeans", "bilateral", "posterize"],
+          "description": "Color quantization method"
+        },
+        "num_colors": {
+          "type": "int",
+          "default": 8,
+          "min": 2,
+          "max": 16,
+          "description": "Number of colors in the output"
+        }
+      }
+    }
+  }
+}

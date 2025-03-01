@@ -122,8 +122,8 @@ resource "aws_s3_object" "effects_neural_dir" {
 resource "aws_s3_object" "effect_core_module" {
   bucket = aws_s3_bucket.video.id
   key    = "effects/core/effect_core.py"
-  source = "${path.module}/effects/core/effect_core.py"
-  etag   = filemd5("${path.module}/effects/core/effect_core.py")
+  source = "../packages/backend/src/effects/core/effect_core.py"
+  etag   = filemd5("../packages/backend/src/effects/core/effect_core.py")
   content_type = "text/x-python"
 }
 
@@ -131,8 +131,8 @@ resource "aws_s3_object" "effect_core_module" {
 resource "aws_s3_object" "processor_script" {
   bucket = aws_s3_bucket.video.id
   key    = "effects/processor.py"
-  source = "${path.module}/effects/processor.py"
-  etag   = filemd5("${path.module}/effects/processor.py")
+  source = "../packages/backend/src/effects/processor.py"
+  etag   = filemd5("../packages/backend/src/effects/processor.py")
   content_type = "text/x-python"
 }
 
@@ -140,8 +140,8 @@ resource "aws_s3_object" "processor_script" {
 resource "aws_s3_object" "effects_manifest" {
   bucket = aws_s3_bucket.video.id
   key    = "effects/manifest.json"
-  source = "${path.module}/effects/manifest.json"
-  etag   = filemd5("${path.module}/effects/manifest.json")
+  source = "../packages/backend/src/effects/manifest.json"
+  etag   = filemd5("../packages/backend/src/effects/manifest.json")
   content_type = "application/json"
 }
 
@@ -149,24 +149,24 @@ resource "aws_s3_object" "effects_manifest" {
 resource "aws_s3_object" "silent_movie_effect" {
   bucket = aws_s3_bucket.video.id
   key    = "effects/ffmpeg/silent_movie.py"
-  source = "${path.module}/effects/ffmpeg/silent_movie.py"
-  etag   = filemd5("${path.module}/effects/ffmpeg/silent_movie.py")
+  source = "../packages/backend/src/effects/ffmpeg/silent_movie.py"
+  etag   = filemd5("../packages/backend/src/effects/ffmpeg/silent_movie.py")
   content_type = "text/x-python"
 }
 
 resource "aws_s3_object" "grindhouse_effect" {
   bucket = aws_s3_bucket.video.id
   key    = "effects/ffmpeg/grindhouse.py"
-  source = "${path.module}/effects/ffmpeg/grindhouse.py"
-  etag   = filemd5("${path.module}/effects/ffmpeg/grindhouse.py")
+  source = "../packages/backend/src/effects/ffmpeg/grindhouse.py"
+  etag   = filemd5("../packages/backend/src/effects/ffmpeg/grindhouse.py")
   content_type = "text/x-python"
 }
 
 resource "aws_s3_object" "technicolor_effect" {
   bucket = aws_s3_bucket.video.id
   key    = "effects/ffmpeg/technicolor.py"
-  source = "${path.module}/effects/ffmpeg/technicolor.py"
-  etag   = filemd5("${path.module}/effects/ffmpeg/technicolor.py")
+  source = "../packages/backend/src/effects/ffmpeg/technicolor.py"
+  etag   = filemd5("../packages/backend/src/effects/ffmpeg/technicolor.py")
   content_type = "text/x-python"
 }
 
@@ -365,7 +365,6 @@ resource "aws_s3_bucket_lifecycle_configuration" "video_lifecycle" {
     id     = "delete_processed_videos"
     status = "Enabled"
 
-    # Only apply to processed videos
     filter {
       prefix = "processed/"
     }
@@ -373,6 +372,11 @@ resource "aws_s3_bucket_lifecycle_configuration" "video_lifecycle" {
     # Delete processed videos after 24 hours
     expiration {
       days = 1
+    }
+
+    # Prevent accidental deletion during Terraform updates
+    noncurrent_version_expiration {
+      noncurrent_days = 1
     }
   }
 }
