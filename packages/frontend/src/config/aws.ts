@@ -7,4 +7,5 @@ export const awsConfig = {
   },
   s3Bucket: process.env.NEXT_PUBLIC_S3_BUCKET_NAME || "",
   sqsQueueUrl: process.env.NEXT_PUBLIC_SQS_QUEUE_URL || "",
+  cloudfrontDomain: process.env.NEXT_PUBLIC_CLOUDFRONT_DOMAIN || "",
 };

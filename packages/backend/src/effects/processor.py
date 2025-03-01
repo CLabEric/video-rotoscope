@@ -11,6 +11,7 @@ import logging
 import boto3
 import subprocess
 import traceback
+import uuid
 from botocore.exceptions import ClientError
 import importlib.util
 from typing import Dict, Any, Optional
@@ -25,6 +26,36 @@ logging.basicConfig(
     ]
 )
 logger = logging.getLogger()
+
+def sanitize_paths(input_path: str, output_path: str) -> tuple:
+    """
+    Ensures that input and output paths are different to avoid FFmpeg in-place errors
+    
+    Args:
+        input_path: Original input path
+        output_path: Original output path
+        
+    Returns:
+        Tuple of (sanitized_input_path, sanitized_output_path)
+    """
+    logger.info(f"Sanitizing paths: input={input_path}, output={output_path}")
+    
+    # If paths are the same, modify the output path
+    if input_path == output_path:
+        # Generate a new temp file path with uuid to ensure uniqueness
+        dirname = os.path.dirname(output_path)
+        basename = os.path.basename(output_path)
+        
+        # Insert a unique ID before extension
+        name, ext = os.path.splitext(basename)
+        unique_id = str(uuid.uuid4())[:8]
+        new_output_path = os.path.join(dirname, f"{name}-processed-{unique_id}{ext}")
+        
+        logger.info(f"Paths were identical! Modified output path to: {new_output_path}")
+        return input_path, new_output_path
+    
+    # Paths are already different, return as is
+    return input_path, output_path
 
 def import_module_from_path(module_name, file_path):
     """
@@ -124,8 +155,15 @@ class VideoProcessor:
             return False
         
         try:
+            # Sanitize paths to ensure input and output paths are different
+            sanitized_input, sanitized_output = sanitize_paths(input_path, output_path)
+            
+            # If output path changed, log it
+            if sanitized_output != output_path:
+                logger.info(f"Using sanitized output path: {sanitized_output}")
+            
             # Get the command for the effect
-            command = self.registry.get_effect_command(effect_type, input_path, output_path)
+            command = self.registry.get_effect_command(effect_type, sanitized_input, sanitized_output)
             if not command:
                 logger.error(f"Failed to get command for effect: {effect_type}")
                 return False
@@ -143,6 +181,18 @@ class VideoProcessor:
             if result.returncode != 0:
                 logger.error(f"FFmpeg stderr: {result.stderr}")
                 return False
+            
+            # If we used a different output path, rename it to the original requested path
+            if sanitized_output != output_path:
+                try:
+                    logger.info(f"Renaming {sanitized_output} to {output_path}")
+                    # Make sure the destination doesn't exist (should be the case)
+                    if os.path.exists(output_path):
+                        os.remove(output_path)
+                    os.rename(sanitized_output, output_path)
+                except Exception as rename_error:
+                    logger.error(f"Error renaming output file: {str(rename_error)}")
+                    # If rename fails, we can still continue since the file exists
             
             logger.info(f"Successfully processed video: {input_path} -> {output_path}")
             return True
@@ -180,6 +230,16 @@ class VideoProcessor:
             input_filename = os.path.basename(input_key)
             output_filename = os.path.basename(output_key)
             
+            # Check if we have the correct folder structure
+            if not input_key.startswith('uploads/'):
+                logger.warning(f"Input key doesn't have 'uploads/' prefix: {input_key}, adding it")
+                input_key = f"uploads/{input_key}"
+                
+            if not output_key.startswith('processed/'):
+                logger.warning(f"Output key doesn't have 'processed/' prefix: {output_key}, fixing it")
+                output_key = f"processed/{output_filename}"
+                logger.info(f"Updated output key to: {output_key}")
+                
             input_path = os.path.join('/tmp', input_filename)
             output_path = os.path.join('/tmp', output_filename)
             
@@ -192,6 +252,19 @@ class VideoProcessor:
             if self.process_video(input_path, output_path, effect_type):
                 # Upload processed file
                 logger.info(f"Uploading to s3://{bucket}/{output_key}")
+                
+                # Ensure the "processed" folder exists (not strictly necessary for S3, but for clarity)
+                try:
+                    # Check if we need to create a processed/ folder marker
+                    if not output_key.startswith('processed/'):
+                        logger.warning(f"Output key doesn't have processed/ prefix: {output_key}")
+                        # Create a new output key in the processed folder
+                        output_key = f"processed/{os.path.basename(output_key)}"
+                        logger.info(f"Fixed output key to: {output_key}")
+                except Exception as e:
+                    logger.warning(f"Error checking output path: {str(e)}")
+                
+                # Upload the file with the corrected output key
                 self.s3_client.upload_file(
                     output_path, 
                     bucket, 

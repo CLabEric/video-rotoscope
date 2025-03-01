@@ -1,7 +1,8 @@
 "use client";
-import React, { useState, useCallback, useEffect } from "react";
-import { Upload, BrainCircuit } from "lucide-react";
+import React, { useState, useCallback, useEffect, useRef } from "react";
+import { Upload, BrainCircuit, RefreshCw } from "lucide-react";
 import { Progress } from "@/components/ui/progress";
+import { Alert, AlertTitle, AlertDescription } from "@/components/ui/alert";
 import { getUploadUrl, queueProcessing, checkProcessingStatus } from "@/lib/aws";
 import EffectSelector from "./EffectSelector";
 import Footer from "./Footer";
@@ -16,74 +17,121 @@ export default function VideoUpload() {
   const [isUploading, setIsUploading] = useState(false);
   const [selectedEffect, setSelectedEffect] = useState("silent-movie");
   const [isProcessing, setIsProcessing] = useState(false);
+  const [processingError, setProcessingError] = useState<string | null>(null);
+  const [elapsedTime, setElapsedTime] = useState(0);
+  
+  const processingTimerRef = useRef<NodeJS.Timeout | null>(null);
+  const pollingRef = useRef<NodeJS.Timeout | null>(null);
 
-	const handleUpload = async (file: File) => {
-		try {
-		// First set up the video preview
-		const previewUrl = URL.createObjectURL(file);
-		setPreview(previewUrl);
-		setVideoFile(file);
-		
-		// Start the upload process
-		setIsUploading(true);
-		setUploadProgress(0);
-		
-		const { url, key } = await getUploadUrl(file.name, file.type);
+  const clearPreviousVideo = () => {
+    // Clear any previous video states
+    setProcessedUrl("");
+    setIsProcessing(false);
+    setProcessingError(null);
+    setElapsedTime(0);
+    
+    // Clear timers
+    if (processingTimerRef.current) {
+      clearInterval(processingTimerRef.current);
+      processingTimerRef.current = null;
+    }
+    
+    if (pollingRef.current) {
+      clearTimeout(pollingRef.current);
+      pollingRef.current = null;
+    }
+  };
 
-		const xhr = new XMLHttpRequest();
-		xhr.upload.onprogress = (event) => {
-			if (event.lengthComputable) {
-			const percentComplete = (event.loaded / event.total) * 100;
-			setUploadProgress(Math.round(percentComplete));
-			}
-		};
+  const handleUpload = async (file: File) => {
+    try {
+      clearPreviousVideo();
+      
+      // First set up the video preview
+      const previewUrl = URL.createObjectURL(file);
+      setPreview(previewUrl);
+      setVideoFile(file);
+      
+      // Start the upload process
+      setIsUploading(true);
+      setUploadProgress(0);
+      
+      const { url, key } = await getUploadUrl(file.name, file.type);
 
-		await new Promise((resolve, reject) => {
-			xhr.open("PUT", url, true);
-			xhr.setRequestHeader("Content-Type", file.type);
-			xhr.onload = () => xhr.status === 200 ? resolve(xhr.response) : reject();
-			xhr.onerror = () => reject();
-			xhr.send(file);
-		});
+      const xhr = new XMLHttpRequest();
+      xhr.upload.onprogress = (event) => {
+        if (event.lengthComputable) {
+          const percentComplete = (event.loaded / event.total) * 100;
+          setUploadProgress(Math.round(percentComplete));
+        }
+      };
 
-		setIsProcessing(true);
-		
-		// Reset processed URL when starting new processing
-		setProcessedUrl("");
-		
-		// Queue processing with selected effect
-		await queueProcessing(key, selectedEffect);
+      await new Promise<void>((resolve, reject) => {
+        xhr.open("PUT", url, true);
+        xhr.setRequestHeader("Content-Type", file.type);
+        xhr.onload = () => xhr.status === 200 ? resolve() : reject(new Error(`Upload failed with status ${xhr.status}`));
+        xhr.onerror = () => reject(new Error("Upload failed"));
+        xhr.send(file);
+      });
 
-		// Start polling for completion
-		const checkStatus = async () => {
-			try {
-			const status = await checkProcessingStatus(key);
-			console.log('Processing status:', status);
-			
-			if (status.status === "completed") {
-				setProcessedUrl(status.key);
-				setIsProcessing(false);
-				return;
-			}
-			
-			// Continue polling if not complete
-			setTimeout(checkStatus, 2000);
-			} catch (error) {
-			console.error('Error checking status:', error);
-			setTimeout(checkStatus, 2000);
-			}
-		};
+      setIsProcessing(true);
+      
+      // Start processing timer
+      processingTimerRef.current = setInterval(() => {
+        setElapsedTime(prev => prev + 1);
+      }, 1000);
+      
+      // Queue processing with selected effect
+      await queueProcessing(key, selectedEffect);
 
-		// Start the polling
-		checkStatus();
-		
-		} catch (error) {
-		console.error("Upload error:", error);
-		setIsProcessing(false);
-		} finally {
-		setIsUploading(false);
-		}
-	};
+      // Start polling for completion
+      const checkStatus = async () => {
+        try {
+          const status = await checkProcessingStatus(key);
+          console.log('Processing status:', status);
+          
+          if (status.status === "completed") {
+            if (status.key) {
+              setProcessedUrl(status.key);
+            } else {
+              setProcessingError("Processing completed but no URL was returned.");
+            }
+            setIsProcessing(false);
+            
+            // Clear the processing timer
+            if (processingTimerRef.current) {
+              clearInterval(processingTimerRef.current);
+              processingTimerRef.current = null;
+            }
+            
+            return;
+          }
+          
+          // Continue polling if not complete
+          pollingRef.current = setTimeout(checkStatus, 3000);
+        } catch (error) {
+          console.error('Error checking status:', error);
+          // Don't stop polling on error, just try again
+          pollingRef.current = setTimeout(checkStatus, 5000);
+        }
+      };
+
+      // Start the polling
+      checkStatus();
+      
+    } catch (error) {
+      console.error("Upload error:", error);
+      setProcessingError(error instanceof Error ? error.message : "An unknown error occurred");
+      setIsProcessing(false);
+      
+      // Clear timers
+      if (processingTimerRef.current) {
+        clearInterval(processingTimerRef.current);
+        processingTimerRef.current = null;
+      }
+    } finally {
+      setIsUploading(false);
+    }
+  };
 
   const handleDrop = useCallback((e: React.DragEvent) => {
     e.preventDefault();
@@ -96,17 +144,40 @@ export default function VideoUpload() {
   }, []);
 
   const handleEffectChange = (effectId: string) => {
-    setSelectedEffect(effectId);
+    // Only allow changing effects when not processing
+    if (!isProcessing && !isUploading) {
+      setSelectedEffect(effectId);
+    }
+  };
+  
+  const formatTime = (seconds: number): string => {
+    const mins = Math.floor(seconds / 60);
+    const secs = seconds % 60;
+    return `${mins}:${secs.toString().padStart(2, '0')}`;
   };
 
-  // Debug log to track state changes
+  // Clean up on unmount
   useEffect(() => {
-    console.log("State updated:", { 
-      isProcessing, 
-      processedUrl, 
-      hasVideoFile: !!videoFile 
-    });
-  }, [isProcessing, processedUrl, videoFile]);
+    return () => {
+      if (processingTimerRef.current) {
+        clearInterval(processingTimerRef.current);
+      }
+      if (pollingRef.current) {
+        clearTimeout(pollingRef.current);
+      }
+    };
+  }, []);
+
+  // Reset video when changing effect
+  const handleReset = () => {
+    // Revoke object URLs to prevent memory leaks
+    if (preview) URL.revokeObjectURL(preview);
+    
+    setVideoFile(null);
+    setPreview("");
+    setProcessedUrl("");
+    clearPreviousVideo();
+  };
 
   return (
     <div className="min-h-screen flex flex-col bg-gradient-to-br from-amber-50 via-orange-50 to-red-50">
@@ -130,16 +201,44 @@ export default function VideoUpload() {
           <div className={`w-full transition-all duration-500 ease-in-out ${videoFile ? 'scale-100 opacity-100' : 'scale-95 opacity-0 pointer-events-none absolute inset-0'}`}>
             {videoFile && (
               <div className="pb-8">
-				<div className="grid grid-cols-1 md:grid-cols-2 gap-4 md:items-start">
-				<div className="flex-shrink-0">
-					<VideoDisplay type="original" videoUrl={preview} />
-				</div>
-				<div className="flex-shrink-0">
-					<VideoDisplay type="processed" videoUrl={processedUrl} isProcessing={isProcessing} />
-				</div>
-				</div>
+                {/* Action Bar */}
+                <div className="flex justify-between items-center mb-4">
+                  <button
+                    onClick={handleReset}
+                    className="flex items-center gap-2 text-orange-600 hover:text-orange-700 bg-orange-50 hover:bg-orange-100 px-3 py-2 rounded-lg transition-colors"
+                  >
+                    <RefreshCw className="w-4 h-4" />
+                    <span>Try Another Video</span>
+                  </button>
+                  
+                  {isProcessing && (
+                    <div className="text-orange-600 flex items-center gap-2">
+                      <span className="animate-pulse">Processing</span>
+                      <span className="text-sm text-orange-500">{formatTime(elapsedTime)}</span>
+                    </div>
+                  )}
+                </div>
+                
+                {/* Video Grid */}
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4 md:items-start">
+                  <div className="flex-shrink-0 order-1">
+                    <VideoDisplay 
+                      type="original" 
+                      videoUrl={preview} 
+                    />
+                  </div>
+                  <div className="flex-shrink-0 order-2">
+                    <VideoDisplay 
+                      type="processed" 
+                      videoUrl={processedUrl} 
+                      isProcessing={isProcessing} 
+                      effectType={selectedEffect}
+                    />
+                  </div>
+                </div>
 
-                <div className="h-[68px] mt-4">
+                {/* Progress and Errors */}
+                <div className="mt-4 space-y-4">
                   {isUploading && (
                     <div className="bg-white rounded-xl shadow-lg overflow-hidden border border-orange-100 p-3">
                       <div className="flex justify-between text-sm text-orange-800 mb-2">
@@ -149,13 +248,20 @@ export default function VideoUpload() {
                       <Progress value={uploadProgress} className="h-2 bg-orange-200" />
                     </div>
                   )}
+                  
+                  {processingError && (
+                    <Alert variant="destructive" className="animate-appear">
+                      <AlertTitle>Processing Failed</AlertTitle>
+                      <AlertDescription>{processingError}</AlertDescription>
+                    </Alert>
+                  )}
                 </div>
               </div>
             )}
           </div>
 
           {/* Upload View */}
-          <div className={`w-full max-w-lg mx-auto transition-all duration-500 ease-in-out ${!videoFile ? 'scale-100 opacity-100' : 'scale-95 opacity-0 pointer-events-none absolute inset-0'}`}>
+          <div className={`w-full max-w-6xl mx-auto transition-all duration-500 ease-in-out ${!videoFile ? 'scale-100 opacity-100' : 'scale-95 opacity-0 pointer-events-none absolute inset-0'}`}>
             <EffectSelector
               selectedEffect={selectedEffect}
               onEffectChange={handleEffectChange}
@@ -169,7 +275,7 @@ export default function VideoUpload() {
               onDragLeave={() => setIsDragging(false)}
               onDrop={handleDrop}
               className={`
-                mt-4 p-6 text-center border-4 border-dashed rounded-xl transition-all
+                mt-8 p-10 text-center border-4 border-dashed rounded-xl transition-all
                 ${isDragging ? "border-orange-500 bg-orange-50" : "border-orange-200 hover:border-orange-500"}
               `}
             >
@@ -193,8 +299,9 @@ export default function VideoUpload() {
                 <h2 className="text-xl font-bold text-orange-900 mb-2">
                   Upload Your Video
                 </h2>
-                <p className="text-orange-700 text-sm">
-                  Drag and drop or click to select
+                <p className="text-orange-700 text-sm max-w-md mx-auto">
+                  Drag and drop or click to select a video file. 
+                  For best results, use videos under 30 seconds.
                 </p>
               </label>
             </div>
