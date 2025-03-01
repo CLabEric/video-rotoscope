@@ -14,8 +14,8 @@ print(f"Model file exists: {os.path.exists(model_path)}")
 print(f"Prototxt file exists: {os.path.exists(prototxt_path)}")
 
 # Input and output paths
-input_video = "test_videos/sample.mp4"
-output_video = "test_videos/processed_opencv_hed.mp4"
+input_video = "test_videos/4873446-hd_720_1280_50fps.mp4"
+output_video = "test_videos/processed_scanner_darkly.mp4"
 
 # Try to load and run HED model on full video
 try:
@@ -44,11 +44,18 @@ try:
     start_time = time.time()
     frame_count = 0
     
+    # Temporal tracking variables
+    prev_edges = None
+    prev_color_reduced = None
+    
     while True:
         ret, frame = cap.read()
         if not ret:
             break
-            
+        
+        # Convert to LAB color space for better color manipulation
+        lab_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2LAB)
+        
         # Process image with HED
         blob = cv2.dnn.blobFromImage(
             frame, 
@@ -62,19 +69,62 @@ try:
         net.setInput(blob)
         edges = net.forward()[0, 0]
         
-        # Apply threshold and create binary edge map
-        edge_map = (edges > 0.3).astype(np.uint8) * 255
+        # Temporal edge smoothing with stronger edge preservation
+        if prev_edges is not None:
+            edges = edges * 0.6 + prev_edges * 0.4
+        prev_edges = edges
         
-        # Convert to 3-channel for visualization
-        edge_map_color = cv2.cvtColor(edge_map, cv2.COLOR_GRAY2BGR)
+        # More aggressive edge detection
+        binary_edges = (edges > 0.2).astype(np.uint8) * 255
         
-        # Apply simple color quantization (for visualization)
-        # You can replace this with your color_quantizer if desired
-        color_reduced = cv2.bilateralFilter(frame, 9, 75, 75)
-        result = color_reduced.copy()
+        # Dilate edges to make them more pronounced
+        kernel = np.ones((3,3), np.uint8)
+        binary_edges = cv2.dilate(binary_edges, kernel, iterations=1)
         
-        # Add black edges
-        result[edge_map > 0] = [0, 0, 0]
+        # Color quantization in LAB space
+        l_channel = lab_frame[:,:,0]
+        pixels = l_channel.reshape((-1, 1)).astype(np.float32)
+        criteria = (cv2.TERM_CRITERIA_EPS + cv2.TERM_CRITERIA_MAX_ITER, 100, 0.2)
+        
+        # Reduce to fewer color levels with more distinct separation
+        k = 5  # Reduced color levels
+        _, labels, centers = cv2.kmeans(
+            pixels, 
+            k, 
+            None, 
+            criteria, 
+            10, 
+            cv2.KMEANS_RANDOM_CENTERS
+        )
+        
+        # Reconstruct lightness channel
+        quantized_l = centers[labels.flatten()].reshape(l_channel.shape)
+        
+        # Reconstruct LAB image
+        lab_frame[:,:,0] = quantized_l
+        
+        # Optional: Reduce color saturation
+        lab_frame[:,:,1] = lab_frame[:,:,1] * 0.7  # Reduce a/b channel saturation
+        lab_frame[:,:,2] = lab_frame[:,:,2] * 0.7
+        
+        # Convert back to BGR
+        quantized_frame = cv2.cvtColor(lab_frame, cv2.COLOR_LAB2BGR)
+        
+        # Temporal color smoothing
+        if prev_color_reduced is not None:
+            quantized_frame = quantized_frame * 0.7 + prev_color_reduced * 0.3
+        prev_color_reduced = quantized_frame
+        
+        # Create edge overlay with slight color variation
+        edge_overlay = np.zeros_like(frame)
+        edge_overlay[binary_edges > 0] = [40, 40, 40]  # Slightly varied dark gray
+        
+        # Blend quantized image with edges
+        result = cv2.addWeighted(quantized_frame.astype(np.uint8), 0.9, edge_overlay, 0.1, 0)
+        
+        # Add slight color bleeding effect
+        if frame_count % 2 == 0:
+            result = cv2.GaussianBlur(result, (3,3), 0)
         
         # Write to output video
         out.write(result)

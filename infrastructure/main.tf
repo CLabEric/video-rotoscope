@@ -233,18 +233,17 @@ data "aws_availability_zones" "available" {
 
 # EC2 Spot Instance Configuration
 resource "aws_spot_instance_request" "video_processor" {
-  ami                    = "ami-0c104f6f4a5d9d1d5"  # Replace with Deep Learning AMI with CUDA
-  instance_type          = "g4dn.xlarge"  # GPU-enabled instance
-  spot_price            = "0.5"  # Adjust price accordingly for g4dn.xlarge
+  ami                   = "ami-09e2639b59ee94f7c"  # Deep Learning AMI GPU PyTorch 2.0.1
+  instance_type         = "g4dn.xlarge"
+  spot_price            = "0.20"  # Setting slightly above the current spot price
   spot_type             = "persistent"
   wait_for_fulfillment  = true
   instance_interruption_behavior = "stop"
-  iam_instance_profile = aws_iam_instance_profile.video_processor.name
+  iam_instance_profile  = aws_iam_instance_profile.video_processor.name
   vpc_security_group_ids = [aws_security_group.video_processor.id]
-  subnet_id = "subnet-008674d77d1c4577c"
+  subnet_id             = "subnet-008674d77d1c4577c"
   associate_public_ip_address = true
 
-  # Remove the data.template_file reference and use templatefile directly
   user_data = base64encode(templatefile("${path.module}/scripts/user-data.sh.tftpl", {
     queue_url    = aws_sqs_queue.video_processing.url
     bucket_name  = aws_s3_bucket.video.id
