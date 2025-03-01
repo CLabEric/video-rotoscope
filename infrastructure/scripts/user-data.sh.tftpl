@@ -2,6 +2,10 @@
 # Video processor setup script with dynamic effects loading
 # Version: 2025-03-01
 
+# Set up basic logging
+exec > >(tee /var/log/user-data.log) 2>&1
+echo "Starting user data script at $(date)"
+
 yum update -y
 amazon-linux-extras install -y epel
 
@@ -60,9 +64,34 @@ ldconfig
 echo "export LD_LIBRARY_PATH=/usr/local/lib:$LD_LIBRARY_PATH" >> /etc/profile
 source /etc/profile
 
-# Install Python dependencies
-pip3 install --upgrade pip
-pip3 install boto3 torch torchvision opencv-python-headless numpy pillow ffmpeg-python tqdm pyyaml
+# Install Python dependencies with improved error handling
+echo "Installing Python dependencies at $(date)..."
+/usr/bin/pip3 install --upgrade pip
+if [ $? -ne 0 ]; then
+    echo "Failed to upgrade pip, continuing anyway..."
+fi
+
+# Install required packages with error checking
+echo "Installing boto3 and other Python packages..."
+/usr/bin/pip3 install boto3 torch torchvision opencv-python-headless numpy pillow ffmpeg-python tqdm pyyaml
+if [ $? -ne 0 ]; then
+    echo "Failed to install Python packages using pip3, trying alternative method"
+    # Try alternative installation method
+    /usr/bin/python3 -m pip install --user boto3
+    # Also try system package if available
+    yum install -y python3-boto3 || echo "Failed to install python3-boto3 package"
+fi
+
+# Verify boto3 installation
+if /usr/bin/python3 -c "import boto3; print('boto3 version:', boto3.__version__)" 2>/dev/null; then
+    echo "boto3 installed successfully"
+else
+    echo "WARNING: boto3 still not available after installation attempts"
+    # One more attempt with explicit system site packages
+    /usr/bin/pip3 install --system boto3
+    echo "Final boto3 check:"
+    /usr/bin/python3 -c "import boto3; print('boto3 version:', boto3.__version__)" || echo "boto3 STILL not available!"
+fi
 
 # Create processor directory structure
 mkdir -p /opt/video-processor
@@ -93,8 +122,8 @@ chmod +x /opt/video-processor/processor.py
 echo "Downloading effects manifest..."
 aws s3 cp s3://${bucket_name}/effects/manifest.json /opt/video-processor/effects/
 
-# Create processor service script
-cat > /etc/systemd/system/video-processor.service << 'EOF'
+# Create processor service script with expanded PYTHONPATH
+cat > /etc/systemd/system/video-processor.service << EOF
 [Unit]
 Description=Video Processor Service
 After=network.target
@@ -103,12 +132,14 @@ After=network.target
 Type=simple
 User=root
 WorkingDirectory=/opt/video-processor
-Environment=PYTHONPATH=/opt/video-processor
+Environment=PYTHONPATH=/opt/video-processor:/usr/local/lib/python3.7/site-packages:/usr/lib/python3/dist-packages:/usr/lib/python3.7/site-packages
 Environment=BUCKET_NAME=${bucket_name}
 Environment=QUEUE_URL=${queue_url}
 ExecStart=/usr/bin/python3 /opt/video-processor/processor.py
 Restart=always
 RestartSec=3
+StandardOutput=append:/var/log/video-processor.log
+StandardError=append:/var/log/video-processor.log
 
 [Install]
 WantedBy=multi-user.target
@@ -122,4 +153,8 @@ chmod 666 /var/log/video-processor.log
 systemctl enable video-processor.service
 systemctl start video-processor.service
 
-echo "Video processor setup complete!"
+# Check service status
+echo "Service status:"
+systemctl status video-processor.service
+
+echo "Video processor setup complete at $(date)!"
