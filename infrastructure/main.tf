@@ -170,6 +170,40 @@ resource "aws_s3_object" "technicolor_effect" {
   content_type = "text/x-python"
 }
 
+# Add the scanner-darkly effect module to S3
+resource "aws_s3_object" "scanner_darkly_effect" {
+  bucket        = aws_s3_bucket.video.id
+  key           = "effects/neural/scanner_darkly.py"
+  source        = "../packages/backend/src/effects/neural/scanner_darkly.py"
+  etag          = filemd5("../packages/backend/src/effects/neural/scanner_darkly.py")
+  content_type  = "text/x-python"
+}
+
+# Upload HED model files to S3
+resource "aws_s3_object" "hed_model" {
+  bucket        = aws_s3_bucket.video.id
+  key           = "effects/neural/models/hed.caffemodel"
+  source        = "../packages/backend/model_weights/hed.caffemodel"
+  etag          = filemd5("../packages/backend/model_weights/hed.caffemodel")
+  content_type  = "application/octet-stream"
+}
+
+resource "aws_s3_object" "hed_prototxt" {
+  bucket        = aws_s3_bucket.video.id
+  key           = "effects/neural/models/hed.prototxt"
+  source        = "../packages/backend/model_weights/hed.prototxt"
+  etag          = filemd5("../packages/backend/model_weights/hed.prototxt")
+  content_type  = "text/plain"
+}
+
+# Create directory for models
+resource "aws_s3_object" "effects_neural_models_dir" {
+  bucket        = aws_s3_bucket.video.id
+  key           = "effects/neural/models/"
+  content_type  = "application/x-directory"
+  source        = "/dev/null"  # Empty content
+}
+
 # CloudFront distribution
 resource "aws_cloudfront_distribution" "frontend" {
   enabled             = true

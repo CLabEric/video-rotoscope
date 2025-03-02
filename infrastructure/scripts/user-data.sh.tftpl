@@ -99,6 +99,7 @@ mkdir -p /opt/video-processor/effects
 mkdir -p /opt/video-processor/effects/core
 mkdir -p /opt/video-processor/effects/ffmpeg
 mkdir -p /opt/video-processor/effects/neural
+mkdir -p /opt/video-processor/model_weights
 cd /opt/video-processor
 
 export PATH=/usr/local/bin:$PATH
@@ -121,6 +122,22 @@ chmod +x /opt/video-processor/processor.py
 # Download manifest file
 echo "Downloading effects manifest..."
 aws s3 cp s3://${bucket_name}/effects/manifest.json /opt/video-processor/effects/
+
+# Download effect modules
+echo "Downloading effect modules..."
+aws s3 cp s3://${bucket_name}/effects/ffmpeg/silent_movie.py /opt/video-processor/effects/ffmpeg/
+aws s3 cp s3://${bucket_name}/effects/ffmpeg/grindhouse.py /opt/video-processor/effects/ffmpeg/
+aws s3 cp s3://${bucket_name}/effects/ffmpeg/technicolor.py /opt/video-processor/effects/ffmpeg/
+aws s3 cp s3://${bucket_name}/effects/neural/scanner_darkly.py /opt/video-processor/effects/neural/
+
+# Download HED model files
+echo "Downloading HED model files for Scanner Darkly effect..."
+aws s3 cp s3://${bucket_name}/effects/neural/models/hed.caffemodel /opt/video-processor/model_weights/
+aws s3 cp s3://${bucket_name}/effects/neural/models/hed.prototxt /opt/video-processor/model_weights/
+
+# Ensure proper permissions
+chmod -R 755 /opt/video-processor/effects
+chmod -R 755 /opt/video-processor/model_weights
 
 # Create processor service script with expanded PYTHONPATH
 cat > /etc/systemd/system/video-processor.service << EOF
