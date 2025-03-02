@@ -524,23 +524,129 @@ def get_command(input_path, output_path, params=None):
     """
     Generate a shell command for applying the Scanner Darkly effect
     
-    This is a fallback for simple cases when the Python-based implementation
-    cannot be used. It uses FFmpeg for basic edge detection and color reduction.
-    
-    Args:
-        input_path: Path to input video
-        output_path: Path to output video
-        params: Optional parameters for customization
-        
-    Returns:
-        Shell command string for FFmpeg
+    This version tries to use the neural implementation first
     """
+    import os
+    import tempfile
+    
+    # Check if model files exist in common locations
+    model_locations = [
+        ("/opt/video-processor/model_weights/hed.caffemodel", 
+         "/opt/video-processor/model_weights/hed.prototxt"),
+        ("/opt/video-processor/hed.caffemodel", 
+         "/opt/video-processor/hed.prototxt")
+    ]
+    
+    model_found = False
+    for model_path, prototxt_path in model_locations:
+        if os.path.exists(model_path) and os.path.exists(prototxt_path):
+            logger.info(f"Found HED model files at {model_path}")
+            model_found = True
+            break
+    
+    if model_found:
+        # Create a temporary script file to run the neural implementation
+        temp_script = tempfile.NamedTemporaryFile(mode='w', suffix='.py', delete=False)
+        
+        # Write the necessary imports and processing code
+        temp_script.write("""
+#!/usr/bin/env python3
+import cv2
+import numpy as np
+import os
+import sys
+
+def main():
+    input_path = sys.argv[1]
+    output_path = sys.argv[2]
+    model_path = sys.argv[3]
+    prototxt_path = sys.argv[4]
+    
+    print(f"Loading model from {model_path}")
+    net = cv2.dnn.readNetFromCaffe(prototxt_path, model_path)
+    
+    # Open the video
+    cap = cv2.VideoCapture(input_path)
+    width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
+    height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+    fps = cap.get(cv2.CAP_PROP_FPS)
+    
+    # Create output video
+    fourcc = cv2.VideoWriter_fourcc(*'mp4v')
+    out = cv2.VideoWriter(output_path, fourcc, fps, (width, height))
+    
+    # Process frames
+    prev_edges = None
+    prev_colors = None
+    
+    while True:
+        ret, frame = cap.read()
+        if not ret:
+            break
+        
+        # Edge detection
+        blob = cv2.dnn.blobFromImage(frame, 1.0, (width, height), (104.00698793, 116.66876762, 122.67891434), swapRB=False)
+        net.setInput(blob)
+        edges = net.forward()[0, 0]
+        
+        # Temporal smoothing
+        if prev_edges is not None:
+            edges = edges * 0.7 + prev_edges * 0.3
+        prev_edges = edges.copy()
+        
+        # Threshold edges
+        edges = (edges > 0.2).astype(np.uint8) * 255
+        
+        # Enhance edges
+        kernel = np.ones((3,3), np.uint8)
+        edges = cv2.dilate(edges, kernel, iterations=1)
+        
+        # Color quantization
+        lab = cv2.cvtColor(frame, cv2.COLOR_BGR2LAB)
+        pixels = lab[:,:,0].reshape((-1, 1)).astype(np.float32)
+        criteria = (cv2.TERM_CRITERIA_EPS + cv2.TERM_CRITERIA_MAX_ITER, 100, 0.2)
+        _, labels, centers = cv2.kmeans(pixels, 5, None, criteria, 10, cv2.KMEANS_RANDOM_CENTERS)
+        lab[:,:,0] = centers[labels.flatten()].reshape(lab[:,:,0].shape)
+        quantized = cv2.cvtColor(lab, cv2.COLOR_LAB2BGR)
+        
+        # Temporal color smoothing
+        if prev_colors is not None:
+            quantized = cv2.addWeighted(quantized, 0.7, prev_colors, 0.3, 0)
+        prev_colors = quantized.copy()
+        
+        # Apply edges
+        edges_mask = (edges > 0)
+        result = quantized.copy()
+        result[edges_mask] = [0, 0, 0]
+        
+        # Write frame
+        out.write(result)
+    
+    # Clean up
+    cap.release()
+    out.release()
+    
+    # Convert to h264
+    os.system(f'ffmpeg -y -i "{output_path}" -c:v libx264 -pix_fmt yuv420p -preset medium -crf 18 "{output_path}.tmp.mp4"')
+    os.replace(f"{output_path}.tmp.mp4", output_path)
+    
+    return 0
+
+if __name__ == "__main__":
+    main()
+""")
+        temp_script.close()
+        os.chmod(temp_script.name, 0o755)
+        
+        # Return command to run the script
+        return f"python3 {temp_script.name} '{input_path}' '{output_path}' '{model_path}' '{prototxt_path}'"
+    
+    # Fallback to FFmpeg
     logger.info(f"Using SCANNER DARKLY fallback FFmpeg command (v{VERSION})")
     
     return (
         f'ffmpeg -y -i "{input_path}" '
         f'-vf "'
-        
         # Edge detection using FFmpeg filters
         f'split=2[a][b];'
         f'[a]edgedetect=mode=colormix:high=0.15:low=0.1[edges];'

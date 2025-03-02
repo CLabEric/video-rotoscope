@@ -135,6 +135,11 @@ echo "Downloading HED model files for Scanner Darkly effect..."
 aws s3 cp s3://${bucket_name}/effects/neural/models/hed.caffemodel /opt/video-processor/model_weights/
 aws s3 cp s3://${bucket_name}/effects/neural/models/hed.prototxt /opt/video-processor/model_weights/
 
+# Create symlink for scanner darkly neural implementation
+echo "Creating symlink for Scanner Darkly neural implementation..."
+ln -s /opt/video-processor/effects/neural/scanner_darkly.py /opt/video-processor/scanner_darkly_neural.py
+chmod +x /opt/video-processor/scanner_darkly_neural.py
+
 # Ensure proper permissions
 chmod -R 755 /opt/video-processor/effects
 chmod -R 755 /opt/video-processor/model_weights
