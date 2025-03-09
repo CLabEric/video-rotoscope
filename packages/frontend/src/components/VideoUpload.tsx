@@ -1,11 +1,14 @@
+// Path: packages/frontend/src/components/VideoUpload.tsx
+
 "use client";
 import React, { useState, useCallback, useEffect, useRef } from "react";
-import { Upload, BrainCircuit, RefreshCw } from "lucide-react";
+import { Upload, RefreshCw } from "lucide-react";
 import { Progress } from "@/components/ui/progress";
 import { Alert, AlertTitle, AlertDescription } from "@/components/ui/alert";
 import { getUploadUrl, queueProcessing, checkProcessingStatus } from "@/lib/aws";
+import { useSession } from "next-auth/react";
+import { listUserVideos } from "@/lib/aws";
 import EffectSelector from "./EffectSelector";
-import Footer from "./Footer";
 import VideoDisplay from "./VideoDisplay";
 
 export default function VideoUpload() {
@@ -19,7 +22,9 @@ export default function VideoUpload() {
   const [isProcessing, setIsProcessing] = useState(false);
   const [processingError, setProcessingError] = useState<string | null>(null);
   const [elapsedTime, setElapsedTime] = useState(0);
-  
+  const { data: session } = useSession();
+  const userId = session?.user?.id || 'anonymous';
+
   const processingTimerRef = useRef<NodeJS.Timeout | null>(null);
   const pollingRef = useRef<NodeJS.Timeout | null>(null);
 
@@ -80,40 +85,68 @@ export default function VideoUpload() {
         setElapsedTime(prev => prev + 1);
       }, 1000);
       
-      // Queue processing with selected effect
-      await queueProcessing(key, selectedEffect);
+      // Queue processing with selected effect - pass userId here
+      await queueProcessing(key, selectedEffect, userId);
 
-      // Start polling for completion
-      const checkStatus = async () => {
-        try {
-          const status = await checkProcessingStatus(key);
-          console.log('Processing status:', status);
-          
-          if (status.status === "completed") {
-            if (status.key) {
-              setProcessedUrl(status.key);
-            } else {
-              setProcessingError("Processing completed but no URL was returned.");
-            }
-            setIsProcessing(false);
-            
-            // Clear the processing timer
-            if (processingTimerRef.current) {
-              clearInterval(processingTimerRef.current);
-              processingTimerRef.current = null;
-            }
-            
-            return;
-          }
-          
-          // Continue polling if not complete
-          pollingRef.current = setTimeout(checkStatus, 3000);
-        } catch (error) {
-          console.error('Error checking status:', error);
-          // Don't stop polling on error, just try again
-          pollingRef.current = setTimeout(checkStatus, 5000);
-        }
-      };
+		// Start polling for completion
+		const checkStatus = async () => {
+		try {
+			// First try the regular status check
+			const status = await checkProcessingStatus(key);
+			
+			// If that doesn't work but we've waited at least 30 seconds, try finding it in the user's videos
+			if (status.status !== "completed" && elapsedTime > 30 && session?.user?.id) {
+			console.log("Regular status check failed, trying to find video in user's videos");
+			
+			// Get the user's recent videos
+			const userVideos = await listUserVideos(session.user.id);
+			
+			// Look for videos uploaded in the last minute (likely our processed video)
+			const recentVideo = userVideos.find(video => {
+				const isRecent = (new Date().getTime() - new Date(video.timestamp).getTime()) < 60000;
+				return isRecent;
+			});
+			
+			if (recentVideo) {
+				console.log("Found recent video:", recentVideo);
+				setProcessedUrl(recentVideo.url);
+				setIsProcessing(false);
+				
+				// Clear the processing timer
+				if (processingTimerRef.current) {
+				clearInterval(processingTimerRef.current);
+				processingTimerRef.current = null;
+				}
+				return;
+			}
+			}
+			
+			// Continue with original logic
+			if (status.status === "completed") {
+			if (status.key) {
+				setProcessedUrl(status.key);
+			} else {
+				setProcessingError("Processing completed but no URL was returned.");
+			}
+			setIsProcessing(false);
+			
+			// Clear the processing timer
+			if (processingTimerRef.current) {
+				clearInterval(processingTimerRef.current);
+				processingTimerRef.current = null;
+			}
+			
+			return;
+			}
+			
+			// Continue polling if not complete
+			pollingRef.current = setTimeout(checkStatus, 3000);
+		} catch (error) {
+			console.error('Error checking status:', error);
+			// Don't stop polling on error, just try again
+			pollingRef.current = setTimeout(checkStatus, 5000);
+		}
+		};
 
       // Start the polling
       checkStatus();
@@ -180,137 +213,116 @@ export default function VideoUpload() {
   };
 
   return (
-    <div className="min-h-screen flex flex-col bg-gradient-to-br from-amber-50 via-orange-50 to-red-50">
-      {/* Header */}
-      <header className="w-full bg-transparent">
-        <div className="container mx-auto max-w-6xl px-4 py-4">
-          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
-            <h1 className="text-xl sm:text-2xl font-bold text-orange-900">Edge Detect Studio</h1>
-            <div className="flex items-center gap-2 bg-orange-50 text-orange-800 px-2 py-1 sm:px-3 sm:py-2 rounded-lg">
-              <BrainCircuit className="w-4 h-4 sm:w-5 sm:h-5 text-orange-600" />
-              <span className="text-xs sm:text-sm">AI-Powered Video Effects</span>
-            </div>
-          </div>
-        </div>
-      </header>
-
-      {/* Main Content */}
-      <main className="flex-1 flex items-center">
-        <div className="container mx-auto max-w-6xl px-4 py-4 relative">
-          {/* Video Processing View */}
-          <div className={`w-full transition-all duration-500 ease-in-out ${videoFile ? 'scale-100 opacity-100' : 'scale-95 opacity-0 pointer-events-none absolute inset-0'}`}>
-            {videoFile && (
-              <div className="pb-8">
-                {/* Action Bar */}
-                <div className="flex justify-between items-center mb-4">
-                  <button
-                    onClick={handleReset}
-                    className="flex items-center gap-2 text-orange-600 hover:text-orange-700 bg-orange-50 hover:bg-orange-100 px-3 py-2 rounded-lg transition-colors"
-                  >
-                    <RefreshCw className="w-4 h-4" />
-                    <span>Try Another Video</span>
-                  </button>
-                  
-                  {isProcessing && (
-                    <div className="text-orange-600 flex items-center gap-2">
-                      <span className="animate-pulse">Processing</span>
-                      <span className="text-sm text-orange-500">{formatTime(elapsedTime)}</span>
-                    </div>
-                  )}
-                </div>
-                
-                {/* Video Grid */}
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-4 md:items-start">
-                  <div className="flex-shrink-0 order-1">
-                    <VideoDisplay 
-                      type="original" 
-                      videoUrl={preview} 
-                    />
-                  </div>
-                  <div className="flex-shrink-0 order-2">
-                    <VideoDisplay 
-                      type="processed" 
-                      videoUrl={processedUrl} 
-                      isProcessing={isProcessing} 
-                      effectType={selectedEffect}
-                    />
-                  </div>
-                </div>
-
-                {/* Progress and Errors */}
-                <div className="mt-4 space-y-4">
-                  {isUploading && (
-                    <div className="bg-white rounded-xl shadow-lg overflow-hidden border border-orange-100 p-3">
-                      <div className="flex justify-between text-sm text-orange-800 mb-2">
-                        <span>Uploading</span>
-                        <span>{uploadProgress}%</span>
-                      </div>
-                      <Progress value={uploadProgress} className="h-2 bg-orange-200" />
-                    </div>
-                  )}
-                  
-                  {processingError && (
-                    <Alert variant="destructive" className="animate-appear">
-                      <AlertTitle>Processing Failed</AlertTitle>
-                      <AlertDescription>{processingError}</AlertDescription>
-                    </Alert>
-                  )}
-                </div>
-              </div>
-            )}
-          </div>
-
-          {/* Upload View */}
-          <div className={`w-full max-w-6xl mx-auto transition-all duration-500 ease-in-out ${!videoFile ? 'scale-100 opacity-100' : 'scale-95 opacity-0 pointer-events-none absolute inset-0'}`}>
-            <EffectSelector
-              selectedEffect={selectedEffect}
-              onEffectChange={handleEffectChange}
-            />
-            
-            <div
-              onDragOver={(e) => {
-                e.preventDefault();
-                setIsDragging(true);
-              }}
-              onDragLeave={() => setIsDragging(false)}
-              onDrop={handleDrop}
-              className={`
-                mt-8 p-10 text-center border-4 border-dashed rounded-xl transition-all
-                ${isDragging ? "border-orange-500 bg-orange-50" : "border-orange-200 hover:border-orange-500"}
-              `}
-            >
-              <input
-                type="file"
-                accept="video/*"
-                onChange={(e) => {
-                  const file = e.target.files?.[0];
-                  if (file) handleUpload(file);
-                }}
-                className="hidden"
-                id="video-upload"
-              />
-              <label
-                htmlFor="video-upload"
-                className="cursor-pointer flex flex-col items-center"
+    <div>
+      {/* Video Processing View */}
+      <div className={`w-full transition-all duration-500 ease-in-out ${videoFile ? 'scale-100 opacity-100' : 'scale-95 opacity-0 pointer-events-none absolute inset-0'}`}>
+        {videoFile && (
+          <div>
+            {/* Action Bar */}
+            <div className="flex justify-between items-center mb-4">
+              <button
+                onClick={handleReset}
+                className="flex items-center gap-2 text-orange-600 hover:text-orange-700 bg-orange-50 hover:bg-orange-100 px-3 py-2 rounded-lg transition-colors"
               >
-                <div className="bg-gradient-to-br from-orange-500 to-red-600 text-white rounded-full w-16 h-16 flex items-center justify-center mb-4">
-                  <Upload className="w-8 h-8" />
+                <RefreshCw className="w-4 h-4" />
+                <span>Try Another Video</span>
+              </button>
+              
+              {isProcessing && (
+                <div className="text-orange-600 flex items-center gap-2">
+                  <span className="animate-pulse">Processing</span>
+                  <span className="text-sm text-orange-500">{formatTime(elapsedTime)}</span>
                 </div>
-                <h2 className="text-xl font-bold text-orange-900 mb-2">
-                  Upload Your Video
-                </h2>
-                <p className="text-orange-700 text-sm max-w-md mx-auto">
-                  Drag and drop or click to select a video file. 
-                  For best results, use videos under 30 seconds.
-                </p>
-              </label>
+              )}
+            </div>
+            
+            {/* Video Grid */}
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4 md:items-start">
+              <div className="flex-shrink-0 order-1">
+                <VideoDisplay 
+                  type="original" 
+                  videoUrl={preview} 
+                />
+              </div>
+              <div className="flex-shrink-0 order-2">
+                <VideoDisplay 
+                  type="processed" 
+                  videoUrl={processedUrl} 
+                  isProcessing={isProcessing} 
+                  effectType={selectedEffect}
+                />
+              </div>
+            </div>
+
+            {/* Progress and Errors */}
+            <div className="mt-4 space-y-4">
+              {isUploading && (
+                <div className="bg-white rounded-xl shadow-lg overflow-hidden border border-orange-100 p-3">
+                  <div className="flex justify-between text-sm text-orange-800 mb-2">
+                    <span>Uploading</span>
+                    <span>{uploadProgress}%</span>
+                  </div>
+                  <Progress value={uploadProgress} className="h-2 bg-orange-200" />
+                </div>
+              )}
+              
+              {processingError && (
+                <Alert variant="destructive" className="animate-appear">
+                  <AlertTitle>Processing Failed</AlertTitle>
+                  <AlertDescription>{processingError}</AlertDescription>
+                </Alert>
+              )}
             </div>
           </div>
-        </div>
-      </main>
+        )}
+      </div>
 
-      {/* Footer */}
-      <Footer />
+      {/* Upload View */}
+      <div className={`w-full transition-all duration-500 ease-in-out ${!videoFile ? 'scale-100 opacity-100' : 'scale-95 opacity-0 pointer-events-none absolute inset-0'}`}>
+        <EffectSelector
+          selectedEffect={selectedEffect}
+          onEffectChange={handleEffectChange}
+        />
+        
+        <div
+          onDragOver={(e) => {
+            e.preventDefault();
+            setIsDragging(true);
+          }}
+          onDragLeave={() => setIsDragging(false)}
+          onDrop={handleDrop}
+          className={`
+            mt-8 p-10 text-center border-4 border-dashed rounded-xl transition-all
+            ${isDragging ? "border-orange-500 bg-orange-50" : "border-orange-200 hover:border-orange-500"}
+          `}
+        >
+          <input
+            type="file"
+            accept="video/*"
+            onChange={(e) => {
+              const file = e.target.files?.[0];
+              if (file) handleUpload(file);
+            }}
+            className="hidden"
+            id="video-upload"
+          />
+          <label
+            htmlFor="video-upload"
+            className="cursor-pointer flex flex-col items-center"
+          >
+            <div className="bg-gradient-to-br from-orange-500 to-red-600 text-white rounded-full w-16 h-16 flex items-center justify-center mb-4">
+              <Upload className="w-8 h-8" />
+            </div>
+            <h2 className="text-xl font-bold text-orange-900 mb-2">
+              Upload Your Video
+            </h2>
+            <p className="text-orange-700 text-sm max-w-md mx-auto">
+              Drag and drop or click to select a video file. 
+              For best results, use videos under 30 seconds.
+            </p>
+          </label>
+        </div>
+      </div>
     </div>
   );
 }
