@@ -27,6 +27,8 @@ logging.basicConfig(
 )
 logger = logging.getLogger()
 
+logger.info(f"************* FROM packages/backend/src/effects/processor.py **********")
+
 def sanitize_paths(input_path: str, output_path: str) -> tuple:
     """
     Ensures that input and output paths are different to avoid FFmpeg in-place errors
@@ -216,10 +218,13 @@ class VideoProcessor:
             body = json.loads(message['Body'])
             logger.info(f"Processing message: {json.dumps(body, indent=2)}")
             
+            # Extract user ID and other parameters
             bucket = body.get('bucket')
             input_key = body.get('input_key')
             output_key = body.get('output_key')
             effect_type = body.get('effect_type', 'silent-movie')
+            user_id = body.get('user_id', 'anonymous')  # Default to anonymous if missing
+            original_filename = body.get('original_filename', os.path.basename(input_key))
             
             # Validate required fields
             if not bucket or not input_key or not output_key:
@@ -234,12 +239,12 @@ class VideoProcessor:
             if not input_key.startswith('uploads/'):
                 logger.warning(f"Input key doesn't have 'uploads/' prefix: {input_key}, adding it")
                 input_key = f"uploads/{input_key}"
-                
+                    
             if not output_key.startswith('processed/'):
                 logger.warning(f"Output key doesn't have 'processed/' prefix: {output_key}, fixing it")
-                output_key = f"processed/{output_filename}"
+                output_key = f"processed/{user_id}/{output_filename}"
                 logger.info(f"Updated output key to: {output_key}")
-                
+                    
             input_path = os.path.join('/tmp', input_filename)
             output_path = os.path.join('/tmp', output_filename)
             
@@ -250,28 +255,22 @@ class VideoProcessor:
             
             # Process video
             if self.process_video(input_path, output_path, effect_type):
-                # Upload processed file
+                # Upload processed file with user metadata
                 logger.info(f"Uploading to s3://{bucket}/{output_key}")
                 
-                # Ensure the "processed" folder exists (not strictly necessary for S3, but for clarity)
-                try:
-                    # Check if we need to create a processed/ folder marker
-                    if not output_key.startswith('processed/'):
-                        logger.warning(f"Output key doesn't have processed/ prefix: {output_key}")
-                        # Create a new output key in the processed folder
-                        output_key = f"processed/{os.path.basename(output_key)}"
-                        logger.info(f"Fixed output key to: {output_key}")
-                except Exception as e:
-                    logger.warning(f"Error checking output path: {str(e)}")
-                
-                # Upload the file with the corrected output key
                 self.s3_client.upload_file(
                     output_path, 
                     bucket, 
                     output_key,
                     ExtraArgs={
                         'ContentType': 'video/mp4',
-                        'ContentDisposition': 'inline'
+                        'ContentDisposition': 'inline',
+                        'Metadata': {
+                            'user-id': user_id,
+                            'effect-type': effect_type,
+                            'created-at': datetime.now().isoformat(),
+                            'original-filename': original_filename
+                        }
                     }
                 )
                 logger.info(f"Uploaded processed file: {output_key}")
@@ -289,7 +288,7 @@ class VideoProcessor:
             else:
                 logger.error("Video processing failed")
                 return False
-                
+                    
         except Exception as e:
             logger.error(f"Error processing message: {str(e)}")
             logger.error(traceback.format_exc())

@@ -34,6 +34,8 @@ logging.basicConfig(
 )
 logger = logging.getLogger('video_processor')
 
+logger.info(f"************* FROM packages/backend/src/main.py **********")
+
 # Constants
 TEMP_DIR = os.environ.get('TEMP_DIR', '/tmp/scanner-darkly')
 MODEL_DIR = os.environ.get('MODEL_DIR', os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'model_weights'))
