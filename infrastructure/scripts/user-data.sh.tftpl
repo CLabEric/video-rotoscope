@@ -157,6 +157,7 @@ WorkingDirectory=/opt/video-processor
 Environment=PYTHONPATH=/opt/video-processor:/usr/local/lib/python3.7/site-packages:/usr/lib/python3/dist-packages:/usr/lib/python3.7/site-packages
 Environment=BUCKET_NAME=${bucket_name}
 Environment=QUEUE_URL=${queue_url}
+Environment=DLQ_URL=${dlq_url}
 ExecStart=/usr/bin/python3 /opt/video-processor/processor.py
 Restart=always
 RestartSec=3

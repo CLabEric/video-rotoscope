@@ -275,21 +275,6 @@ resource "aws_cloudfront_distribution" "frontend" {
   }
 }
 
-# SQS Queue for video processing
-resource "aws_sqs_queue" "video_processing" {
-  name = "${var.app_name}-video-processing"
-}
-
-# Outputs
-output "cloudfront_domain" {
-  value = aws_cloudfront_distribution.frontend.domain_name
-}
-
-# output "sqs_queue_url" {
-#   value = aws_sqs_queue.video_processing.url
-# }
-
-
 # EC2 Spot Instance Configuration
 resource "aws_iam_role" "video_processor" {
   name = "${var.app_name}-processor-role"
@@ -332,9 +317,13 @@ resource "aws_iam_role_policy" "processor_policy" {
           "sqs:ReceiveMessage",
           "sqs:DeleteMessage",
           "sqs:GetQueueAttributes",
-          "sqs:ChangeMessageVisibility"
+          "sqs:ChangeMessageVisibility",
+          "sqs:SendMessage"
         ]
-        Resource = [aws_sqs_queue.video_processing.arn]
+        Resource = [
+          aws_sqs_queue.video_processing.arn,
+          aws_sqs_queue.video_processing_dlq.arn
+        ]
       }
     ]
   })
@@ -365,6 +354,7 @@ resource "aws_spot_instance_request" "video_processor" {
   user_data = base64encode(templatefile("${path.module}/scripts/user-data.sh.tftpl", {
     queue_url    = aws_sqs_queue.video_processing.url
     bucket_name  = aws_s3_bucket.video.id
+    dlq_url      = aws_sqs_queue.video_processing_dlq.url  # Add this line
   }))
 
   tags = {
@@ -412,5 +402,53 @@ resource "aws_s3_bucket_lifecycle_configuration" "video_lifecycle" {
     noncurrent_version_expiration {
       noncurrent_days = 1
     }
+  }
+}
+
+# Dead Letter Queue for video processing
+resource "aws_sqs_queue" "video_processing_dlq" {
+  name = "${var.app_name}-video-processing-dlq"
+  
+  # DLQ retention period - keep failed messages for 14 days
+  message_retention_seconds = 1209600
+  
+  # Encryption and other settings
+  sqs_managed_sse_enabled = true
+}
+
+# Update the main queue with redrive policy
+resource "aws_sqs_queue" "video_processing" {
+  name = "${var.app_name}-video-processing"
+  
+  # Configure DLQ redrive policy - move messages to DLQ after 5 failed attempts
+  redrive_policy = jsonencode({
+    deadLetterTargetArn = aws_sqs_queue.video_processing_dlq.arn
+    maxReceiveCount     = 5
+  })
+  
+  # Set visibility timeout to 10 minutes for long-running jobs
+  visibility_timeout_seconds = 600
+  
+  # Add message attributes for tracking
+  message_retention_seconds = 86400 # 1 day
+  
+  # Encryption
+  sqs_managed_sse_enabled = true
+}
+
+# CloudWatch alarm for DLQ messages
+resource "aws_cloudwatch_metric_alarm" "dlq_messages_alarm" {
+  alarm_name          = "${var.app_name}-dlq-messages"
+  comparison_operator = "GreaterThanThreshold"
+  evaluation_periods  = "1"
+  metric_name         = "ApproximateNumberOfMessagesVisible"
+  namespace           = "AWS/SQS"
+  period              = "300"
+  statistic           = "Sum"
+  threshold           = "0"
+  alarm_description   = "This alarm monitors for messages in the DLQ"
+  
+  dimensions = {
+    QueueName = aws_sqs_queue.video_processing_dlq.name
   }
 }
