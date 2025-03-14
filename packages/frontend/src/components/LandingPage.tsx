@@ -1,21 +1,8 @@
-// src/app/page.tsx
-"use client";
+// src/components/LandingPage.tsx
+import React from 'react';
+import Link from 'next/link';
 
-import { useEffect } from "react";
-import Link from "next/link";
-import { useRouter } from "next/navigation";
-
-export default function Home() {
-  const router = useRouter();
-  
-  useEffect(() => {
-    // Check for auth on client side
-    const hasFirebaseToken = document.cookie.includes('firebase-auth-token');
-    if (hasFirebaseToken) {
-      router.push("/dashboard");
-    }
-  }, [router]);
-  
+const LandingPage = () => {
   return (
     <div className="min-h-screen flex flex-col">
       <main className="flex-grow container mx-auto px-4 py-12">
@@ -36,4 +23,6 @@ export default function Home() {
       </main>
     </div>
   );
-}
+};
+
+export default LandingPage;

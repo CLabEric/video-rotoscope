@@ -1,10 +1,9 @@
-// Path: packages/frontend/src/app/layout.tsx
-
+// src/app/layout.tsx
 import "./globals.css";
 import type { Metadata } from "next";
 import { Inter } from "next/font/google";
-import AuthProvider from "@/components/auth/Provider";
-import Header from "@/components/Header"; // Add this import
+import { ClientAuthProvider } from "@/components/ClientAuthProvider";
+import Header from "@/components/Header";
 
 const inter = Inter({ subsets: ["latin"] });
 
@@ -21,10 +20,10 @@ export default function RootLayout({
   return (
     <html lang="en">
       <body className={inter.className}>
-        <AuthProvider>
-          <Header /> {/* Add the Header component here */}
+        <ClientAuthProvider>
+          <Header />
           {children}
-        </AuthProvider>
+        </ClientAuthProvider>
       </body>
     </html>
   );

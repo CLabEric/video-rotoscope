@@ -1,4 +1,4 @@
-// Path: packages/frontend/src/components/VideoUpload.tsx
+// packages/frontend/src/components/VideoUpload.tsx
 
 "use client";
 import React, { useState, useCallback, useEffect, useRef } from "react";
@@ -6,7 +6,7 @@ import { Upload, RefreshCw } from "lucide-react";
 import { Progress } from "@/components/ui/progress";
 import { Alert, AlertTitle, AlertDescription } from "@/components/ui/alert";
 import { getUploadUrl, queueProcessing, checkProcessingStatus } from "@/lib/aws";
-import { useSession } from "next-auth/react";
+import { useAuthContext } from "@/contexts/AuthContext";
 import { listUserVideos } from "@/lib/aws";
 import EffectSelector from "./EffectSelector";
 import VideoDisplay from "./VideoDisplay";
@@ -22,8 +22,7 @@ export default function VideoUpload() {
   const [isProcessing, setIsProcessing] = useState(false);
   const [processingError, setProcessingError] = useState<string | null>(null);
   const [elapsedTime, setElapsedTime] = useState(0);
-  const { data: session } = useSession();
-  const userId = session?.user?.id || 'anonymous';
+  const { userId } = useAuthContext();
 
   const processingTimerRef = useRef<NodeJS.Timeout | null>(null);
   const pollingRef = useRef<NodeJS.Timeout | null>(null);
@@ -88,65 +87,65 @@ export default function VideoUpload() {
       // Queue processing with selected effect - pass userId here
       await queueProcessing(key, selectedEffect, userId);
 
-		// Start polling for completion
-		const checkStatus = async () => {
-		try {
-			// First try the regular status check
-			const status = await checkProcessingStatus(key);
-			
-			// If that doesn't work but we've waited at least 30 seconds, try finding it in the user's videos
-			if (status.status !== "completed" && elapsedTime > 30 && session?.user?.id) {
-			console.log("Regular status check failed, trying to find video in user's videos");
-			
-			// Get the user's recent videos
-			const userVideos = await listUserVideos(session.user.id);
-			
-			// Look for videos uploaded in the last minute (likely our processed video)
-			const recentVideo = userVideos.find(video => {
-				const isRecent = (new Date().getTime() - new Date(video.timestamp).getTime()) < 60000;
-				return isRecent;
-			});
-			
-			if (recentVideo) {
-				console.log("Found recent video:", recentVideo);
-				setProcessedUrl(recentVideo.url);
-				setIsProcessing(false);
-				
-				// Clear the processing timer
-				if (processingTimerRef.current) {
-				clearInterval(processingTimerRef.current);
-				processingTimerRef.current = null;
-				}
-				return;
-			}
-			}
-			
-			// Continue with original logic
-			if (status.status === "completed") {
-			if (status.key) {
-				setProcessedUrl(status.key);
-			} else {
-				setProcessingError("Processing completed but no URL was returned.");
-			}
-			setIsProcessing(false);
-			
-			// Clear the processing timer
-			if (processingTimerRef.current) {
-				clearInterval(processingTimerRef.current);
-				processingTimerRef.current = null;
-			}
-			
-			return;
-			}
-			
-			// Continue polling if not complete
-			pollingRef.current = setTimeout(checkStatus, 3000);
-		} catch (error) {
-			console.error('Error checking status:', error);
-			// Don't stop polling on error, just try again
-			pollingRef.current = setTimeout(checkStatus, 5000);
-		}
-		};
+      // Start polling for completion
+      const checkStatus = async () => {
+        try {
+          // First try the regular status check
+          const status = await checkProcessingStatus(key, userId, selectedEffect);
+          
+          // If that doesn't work but we've waited at least 30 seconds, try finding it in the user's videos
+          if (status.status !== "completed" && elapsedTime > 30) {
+            console.log("Regular status check failed, trying to find video in user's videos");
+            
+            // Get the user's recent videos
+            const userVideos = await listUserVideos(userId);
+            
+            // Look for videos uploaded in the last minute (likely our processed video)
+            const recentVideo = userVideos.find(video => {
+              const isRecent = (new Date().getTime() - new Date(video.timestamp).getTime()) < 60000;
+              return isRecent;
+            });
+            
+            if (recentVideo) {
+              console.log("Found recent video:", recentVideo);
+              setProcessedUrl(recentVideo.url);
+              setIsProcessing(false);
+              
+              // Clear the processing timer
+              if (processingTimerRef.current) {
+                clearInterval(processingTimerRef.current);
+                processingTimerRef.current = null;
+              }
+              return;
+            }
+          }
+          
+          // Continue with original logic
+          if (status.status === "completed") {
+            if (status.key) {
+              setProcessedUrl(status.key);
+            } else {
+              setProcessingError("Processing completed but no URL was returned.");
+            }
+            setIsProcessing(false);
+            
+            // Clear the processing timer
+            if (processingTimerRef.current) {
+              clearInterval(processingTimerRef.current);
+              processingTimerRef.current = null;
+            }
+            
+            return;
+          }
+          
+          // Continue polling if not complete
+          pollingRef.current = setTimeout(checkStatus, 3000);
+        } catch (error) {
+          console.error('Error checking status:', error);
+          // Don't stop polling on error, just try again
+          pollingRef.current = setTimeout(checkStatus, 5000);
+        }
+      };
 
       // Start the polling
       checkStatus();
