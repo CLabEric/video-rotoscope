@@ -7,11 +7,14 @@ import { Progress } from "@/components/ui/progress";
 import { Alert, AlertTitle, AlertDescription } from "@/components/ui/alert";
 import { getUploadUrl, queueProcessing, checkProcessingStatus } from "@/lib/aws";
 import { useAuthContext } from "@/contexts/AuthContext";
-import { listUserVideos } from "@/lib/aws";
 import EffectSelector from "./EffectSelector";
 import VideoDisplay from "./VideoDisplay";
 
-export default function VideoUpload() {
+interface VideoUploadProps {
+  onProcessingComplete?: () => void;
+}
+
+const VideoUpload: React.FC<VideoUploadProps> = ({ onProcessingComplete }) => {
   const [videoFile, setVideoFile] = useState<File | null>(null);
   const [preview, setPreview] = useState<string>("");
   const [processedUrl, setProcessedUrl] = useState<string>("");
@@ -95,20 +98,16 @@ export default function VideoUpload() {
           
           // If that doesn't work but we've waited at least 30 seconds, try finding it in the user's videos
           if (status.status !== "completed" && elapsedTime > 30) {
-            console.log("Regular status check failed, trying to find video in user's videos");
+            console.log("Regular status check failed, trying alternative method");
             
-            // Get the user's recent videos
-            const userVideos = await listUserVideos(userId);
-            
-            // Look for videos uploaded in the last minute (likely our processed video)
-            const recentVideo = userVideos.find(video => {
-              const isRecent = (new Date().getTime() - new Date(video.timestamp).getTime()) < 60000;
-              return isRecent;
-            });
-            
-            if (recentVideo) {
-              console.log("Found recent video:", recentVideo);
-              setProcessedUrl(recentVideo.url);
+            // Processed video might be available but not detected by the status check
+            if (elapsedTime > 90) {
+              console.log("Processing exceeded 90 seconds, suggesting completion");
+              
+              if (onProcessingComplete) {
+                onProcessingComplete();
+              }
+              
               setIsProcessing(false);
               
               // Clear the processing timer
@@ -124,6 +123,14 @@ export default function VideoUpload() {
           if (status.status === "completed") {
             if (status.key) {
               setProcessedUrl(status.key);
+              
+              // Notify parent component that processing is complete
+              if (onProcessingComplete) {
+                // Wait a little bit before triggering the callback to allow the user to see the result
+                setTimeout(() => {
+                  onProcessingComplete();
+                }, 3000);
+              }
             } else {
               setProcessingError("Processing completed but no URL was returned.");
             }
@@ -324,4 +331,6 @@ export default function VideoUpload() {
       </div>
     </div>
   );
-}
+};
+
+export default VideoUpload;
