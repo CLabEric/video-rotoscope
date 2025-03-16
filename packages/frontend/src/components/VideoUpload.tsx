@@ -9,7 +9,7 @@ import { getUploadUrl, queueProcessing, checkProcessingStatus } from "@/lib/aws"
 import { useAuthContext } from "@/contexts/AuthContext";
 import EffectSelector from "./EffectSelector";
 import VideoDisplay from "./VideoDisplay";
-
+import stripePromise from '@/lib/stripe';
 interface VideoUploadProps {
   onProcessingComplete?: () => void;
 }
@@ -49,128 +49,84 @@ const VideoUpload: React.FC<VideoUploadProps> = ({ onProcessingComplete }) => {
     }
   };
 
-  const handleUpload = async (file: File) => {
-    try {
-      clearPreviousVideo();
-      
-      // First set up the video preview
-      const previewUrl = URL.createObjectURL(file);
-      setPreview(previewUrl);
-      setVideoFile(file);
-      
-      // Start the upload process
-      setIsUploading(true);
-      setUploadProgress(0);
-      
-      const { url, key } = await getUploadUrl(file.name, file.type);
+	const handleUpload = async (file: File) => {
+		try {
+			clearPreviousVideo();
+			
+			// First set up the video preview
+			const previewUrl = URL.createObjectURL(file);
+			setPreview(previewUrl);
+			setVideoFile(file);
+			
+			// Start the upload process
+			setIsUploading(true);
+			setUploadProgress(0);
+			
+			const { url, key } = await getUploadUrl(file.name, file.type);
 
-      const xhr = new XMLHttpRequest();
-      xhr.upload.onprogress = (event) => {
-        if (event.lengthComputable) {
-          const percentComplete = (event.loaded / event.total) * 100;
-          setUploadProgress(Math.round(percentComplete));
-        }
-      };
+			const xhr = new XMLHttpRequest();
+			xhr.upload.onprogress = (event) => {
+			if (event.lengthComputable) {
+				const percentComplete = (event.loaded / event.total) * 100;
+				setUploadProgress(Math.round(percentComplete));
+			}
+			};
 
-      await new Promise<void>((resolve, reject) => {
-        xhr.open("PUT", url, true);
-        xhr.setRequestHeader("Content-Type", file.type);
-        xhr.onload = () => xhr.status === 200 ? resolve() : reject(new Error(`Upload failed with status ${xhr.status}`));
-        xhr.onerror = () => reject(new Error("Upload failed"));
-        xhr.send(file);
-      });
+			await new Promise<void>((resolve, reject) => {
+			xhr.open("PUT", url, true);
+			xhr.setRequestHeader("Content-Type", file.type);
+			xhr.onload = () => xhr.status === 200 ? resolve() : reject(new Error(`Upload failed with status ${xhr.status}`));
+			xhr.onerror = () => reject(new Error("Upload failed"));
+			xhr.send(file);
+			});
 
-      setIsProcessing(true);
-      
-      // Start processing timer
-      processingTimerRef.current = setInterval(() => {
-        setElapsedTime(prev => prev + 1);
-      }, 1000);
-      
-      // Queue processing with selected effect - pass userId here
-      await queueProcessing(key, selectedEffect, userId);
-
-      // Start polling for completion
-      const checkStatus = async () => {
-        try {
-          // First try the regular status check
-          const status = await checkProcessingStatus(key, userId, selectedEffect);
-          
-          // If that doesn't work but we've waited at least 30 seconds, try finding it in the user's videos
-          if (status.status !== "completed" && elapsedTime > 30) {
-            console.log("Regular status check failed, trying alternative method");
-            
-            // Processed video might be available but not detected by the status check
-            if (elapsedTime > 90) {
-              console.log("Processing exceeded 90 seconds, suggesting completion");
-              
-              if (onProcessingComplete) {
-                onProcessingComplete();
-              }
-              
-              setIsProcessing(false);
-              
-              // Clear the processing timer
-              if (processingTimerRef.current) {
-                clearInterval(processingTimerRef.current);
-                processingTimerRef.current = null;
-              }
-              return;
-            }
-          }
-          
-          // Continue with original logic
-          if (status.status === "completed") {
-            if (status.key) {
-              setProcessedUrl(status.key);
-              
-              // Notify parent component that processing is complete
-              if (onProcessingComplete) {
-                // Wait a little bit before triggering the callback to allow the user to see the result
-                setTimeout(() => {
-                  onProcessingComplete();
-                }, 3000);
-              }
-            } else {
-              setProcessingError("Processing completed but no URL was returned.");
-            }
-            setIsProcessing(false);
-            
-            // Clear the processing timer
-            if (processingTimerRef.current) {
-              clearInterval(processingTimerRef.current);
-              processingTimerRef.current = null;
-            }
-            
-            return;
-          }
-          
-          // Continue polling if not complete
-          pollingRef.current = setTimeout(checkStatus, 3000);
-        } catch (error) {
-          console.error('Error checking status:', error);
-          // Don't stop polling on error, just try again
-          pollingRef.current = setTimeout(checkStatus, 5000);
-        }
-      };
-
-      // Start the polling
-      checkStatus();
-      
-    } catch (error) {
-      console.error("Upload error:", error);
-      setProcessingError(error instanceof Error ? error.message : "An unknown error occurred");
-      setIsProcessing(false);
-      
-      // Clear timers
-      if (processingTimerRef.current) {
-        clearInterval(processingTimerRef.current);
-        processingTimerRef.current = null;
-      }
-    } finally {
-      setIsUploading(false);
-    }
-  };
+			// After upload completes, redirect to Stripe
+			setIsUploading(false);
+			
+			// Get Stripe instance
+			const stripe = await stripePromise;
+			if (!stripe) throw new Error('Stripe failed to load');
+			
+			// Select the correct price ID based on effect
+			const priceId = selectedEffect === 'scanner-darkly' 
+			? process.env.NEXT_PUBLIC_STRIPE_PREMIUM_PRICE_ID 
+			: process.env.NEXT_PUBLIC_STRIPE_STANDARD_PRICE_ID;
+			
+			if (!priceId) {
+			throw new Error('Price ID not configured');
+			}
+			
+			// Redirect to Stripe Checkout
+			const { error } = await stripe.redirectToCheckout({
+			lineItems: [
+				{
+				price: priceId,
+				quantity: 1,
+				},
+			],
+			mode: 'payment',
+			successUrl: `${window.location.origin}/#payment-success?videoKey=${encodeURIComponent(key)}&effectType=${encodeURIComponent(selectedEffect)}&userId=${encodeURIComponent(userId)}`,
+			cancelUrl: `${window.location.origin}/dashboard`,
+			});
+			
+			if (error) {
+			throw new Error(error.message);
+			}
+			
+		} catch (error) {
+			console.error("Upload error:", error);
+			setProcessingError(error instanceof Error ? error.message : "An unknown error occurred");
+			setIsProcessing(false);
+			
+			// Clear timers
+			if (processingTimerRef.current) {
+			clearInterval(processingTimerRef.current);
+			processingTimerRef.current = null;
+			}
+		} finally {
+			setIsUploading(false);
+		}
+	};
 
   const handleDrop = useCallback((e: React.DragEvent) => {
     e.preventDefault();
