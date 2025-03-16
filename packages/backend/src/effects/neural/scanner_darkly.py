@@ -1,266 +1,260 @@
 #!/usr/bin/env python3
 """
-Scanner Darkly effect using HED (Holistically-Nested Edge Detection)
-Creates a rotoscoping effect similar to the one used in the movie "A Scanner Darkly"
+Scanner Darkly effect with optical flow for improved temporal consistency
 """
 
 import os
 import cv2
 import numpy as np
 import logging
-import tempfile
-import subprocess
 from typing import List, Tuple, Optional
 
 # Set up logging
 logger = logging.getLogger(__name__)
 
-VERSION = "1.0.0"
+VERSION = "6.0.0-FLOW"
 
 class ScannerDarklyEffect:
     """
-    Neural network-based rotoscoping effect using edge detection
-    and color quantization
+    Scanner Darkly rotoscoping effect with optical flow for consistent edges
+    between frames, producing results similar to the film's artistic style
     """
     
     def __init__(
         self,
-        model_path: str = None,
-        prototxt_path: str = None,
-        edge_strength: float = 0.8,
-        edge_thickness: float = 1.5,
-        num_colors: int = 8,
-        color_method: str = "kmeans",
-        smoothing: float = 0.6,
-        saturation: float = 1.2,
-        temporal_smoothing: float = 0.3,
-        preserve_black: bool = True
+        model_path: str = None,         # For compatibility, not used
+        prototxt_path: str = None,      # For compatibility, not used
+        edge_strength: float = 0.8,     # Edge strength
+        edge_thickness: float = 0.4,    # Line thickness
+        edge_threshold: float = 0.75,   # Threshold for edge detection
+        num_colors: int = 5,            # Number of colors in quantization
+        color_method: str = "kmeans",   # For compatibility
+        smoothing: float = 0.9,         # Smoothing strength
+        saturation: float = 1.2,        # Saturation adjustment
+        temporal_smoothing: float = 0.4, # Increased for better consistency
+        preserve_black: bool = True,    # Whether to use black for edges
+        flow_weight: float = 0.7        # Weight for optical flow edges
     ):
-        """
-        Initialize Scanner Darkly effect
-        
-        Args:
-            model_path: Path to the HED model weights (.caffemodel)
-            prototxt_path: Path to the HED model definition (.prototxt)
-            edge_strength: Strength of edges (0.0-1.0)
-            edge_thickness: Thickness of edges (0.5-3.0)
-            num_colors: Number of colors in output (2-16)
-            color_method: Method for color quantization ('kmeans', 'bilateral', 'posterize')
-            smoothing: Amount of smoothing (0.0-1.0)
-            saturation: Color saturation multiplier
-            temporal_smoothing: Smoothing between frames (0.0-0.9)
-            preserve_black: Whether to preserve black edges
-        """
+        """Initialize with parameters tuned for movie-like results"""
         self.edge_strength = edge_strength
         self.edge_thickness = edge_thickness
+        self.edge_threshold = edge_threshold
         self.num_colors = num_colors
-        self.color_method = color_method
         self.smoothing = smoothing
         self.saturation = saturation
         self.temporal_smoothing = temporal_smoothing
         self.preserve_black = preserve_black
+        self.flow_weight = flow_weight
         
-        # Initialize model paths
-        self.model_path = model_path
-        self.prototxt_path = prototxt_path
+        # For tracking between frames
+        self.prev_frame = None        # Previous frame for optical flow
+        self.prev_gray = None         # Grayscale version for flow calculation
+        self.prev_edges = None        # Previous detected edges
+        self.prev_colors = None       # Previous color quantization
+        self.prev_result = None       # Previous result for consistency
         
-        # For temporal smoothing
-        self.prev_edges = None
-        self.prev_colors = None
-        
-        # Try to find model files if not provided
-        if not self.model_path or not self.prototxt_path:
-            self._find_model_files()
-        
-        logger.info(f"Initialized Scanner Darkly effect (v{VERSION})")
-        logger.info(f"Using model: {self.model_path}")
-        logger.info(f"Using prototxt: {self.prototxt_path}")
-    
-    def _find_model_files(self):
-        """Find HED model files in common locations"""
-        # Check common locations
-        search_paths = [
-            # Current directory
-            os.path.dirname(os.path.abspath(__file__)),
-            # Model weights directory
-            os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))), "model_weights"),
-            # /opt/video-processor
-            "/opt/video-processor",
-            # /opt/video-processor/models
-            "/opt/video-processor/models",
-            # /tmp/video-processor
-            "/tmp/video-processor"
-        ]
-        
-        for path in search_paths:
-            potential_caffemodel = os.path.join(path, "hed.caffemodel")
-            potential_prototxt = os.path.join(path, "hed.prototxt")
-            
-            if os.path.exists(potential_caffemodel) and os.path.exists(potential_prototxt):
-                logger.info(f"Found model files in {path}")
-                self.model_path = potential_caffemodel
-                self.prototxt_path = potential_prototxt
-                return
-        
-        # If not found, try to download from S3 to a temporary location
-        logger.warning("Model files not found in common locations, will try to download from S3")
-        self._download_model_files()
-    
-    def _download_model_files(self):
-        """Download model files from S3 if available"""
+        # For face detection
+        self.face_cascade = None
         try:
-            import boto3
-            from botocore.exceptions import ClientError
-            
-            # Create a temporary directory for models
-            model_dir = os.path.join(tempfile.gettempdir(), "scanner_darkly_models")
-            os.makedirs(model_dir, exist_ok=True)
-            
-            # Get the current S3 bucket from environment
-            bucket_name = os.environ.get("BUCKET_NAME")
-            if not bucket_name:
-                logger.error("BUCKET_NAME environment variable not set")
-                return
-            
-            # Initialize S3 client
-            s3 = boto3.client("s3")
-            
-            # Try to download model files
-            model_s3_key = "effects/neural/models/hed.caffemodel"
-            prototxt_s3_key = "effects/neural/models/hed.prototxt"
-            
-            model_path = os.path.join(model_dir, "hed.caffemodel")
-            prototxt_path = os.path.join(model_dir, "hed.prototxt")
-            
-            logger.info(f"Downloading model from s3://{bucket_name}/{model_s3_key}")
-            s3.download_file(bucket_name, model_s3_key, model_path)
-            
-            logger.info(f"Downloading prototxt from s3://{bucket_name}/{prototxt_s3_key}")
-            s3.download_file(bucket_name, prototxt_s3_key, prototxt_path)
-            
-            logger.info("Model files downloaded successfully")
-            self.model_path = model_path
-            self.prototxt_path = prototxt_path
-            
-        except ImportError:
-            logger.error("boto3 not available, cannot download model files")
-        except ClientError as e:
-            logger.error(f"Error downloading model files: {str(e)}")
-        except Exception as e:
-            logger.error(f"Unexpected error downloading model files: {str(e)}")
-    
-    def _load_neural_network(self):
-        """
-        Load the HED neural network model
+            haar_path = os.path.join(cv2.data.haarcascades, 'haarcascade_frontalface_default.xml')
+            if os.path.exists(haar_path):
+                self.face_cascade = cv2.CascadeClassifier(haar_path)
+                logger.info("Face detection enabled for better feature preservation")
+        except:
+            logger.warning("Face detection not available - will rely on edge detection only")
         
-        Returns:
-            OpenCV DNN model or None if failed
-        """
-        try:
-            if not self.model_path or not self.prototxt_path:
-                logger.error("Model paths not set")
-                return None
-            
-            if not os.path.exists(self.model_path) or not os.path.exists(self.prototxt_path):
-                logger.error(f"Model file not found: {self.model_path}")
-                logger.error(f"Prototxt file not found: {self.prototxt_path}")
-                return None
-            
-            logger.info("Loading HED model")
-            net = cv2.dnn.readNetFromCaffe(self.prototxt_path, self.model_path)
-            logger.info("HED model loaded successfully")
-            return net
+        # Parameters for optical flow
+        self.flow_params = dict(
+            pyr_scale=0.5,    # Image pyramid scale
+            levels=3,         # Number of pyramid levels
+            winsize=15,       # Averaging window size
+            iterations=3,     # Number of iterations at each pyramid level
+            poly_n=5,         # Size of pixel neighborhood for polynomial expansion
+            poly_sigma=1.2,   # Std dev of Gaussian for polynomial expansion
+            flags=0           # Flags
+        )
         
-        except Exception as e:
-            logger.error(f"Error loading neural network: {str(e)}")
-            return None
+        logger.info(f"*** INITIALIZED SCANNER DARKLY EFFECT WITH OPTICAL FLOW v{VERSION} ***")
     
-    def _detect_edges(self, frame, net):
+    def _apply_optical_flow(self, current_frame, current_edges):
         """
-        Detect edges using HED neural network
+        Apply optical flow to warp previous edges to current frame
         
         Args:
-            frame: Input frame
-            net: Neural network model
+            current_frame: Current frame
+            current_edges: Currently detected edges
             
         Returns:
-            Edge map normalized to 0-1
+            Flow-warped edges from previous frame
         """
-        try:
-            height, width = frame.shape[:2]
+        if self.prev_frame is None or self.prev_edges is None:
+            return current_edges
             
-            # Prepare the input blob for the network
-            blob = cv2.dnn.blobFromImage(
-                frame, 
-                scalefactor=1.0, 
-                size=(width, height),
-                mean=(104.00698793, 116.66876762, 122.67891434),
-                swapRB=False, 
-                crop=False
+        try:
+            # Convert current frame to grayscale for flow calculation
+            current_gray = cv2.cvtColor(current_frame, cv2.COLOR_BGR2GRAY)
+            
+            # Calculate optical flow between previous and current frame
+            flow = cv2.calcOpticalFlowFarneback(
+                self.prev_gray, 
+                current_gray, 
+                None, 
+                **self.flow_params
             )
             
-            # Set the input and run forward pass
-            net.setInput(blob)
-            edges = net.forward()[0, 0]
+            # Create a grid of coordinates
+            h, w = current_frame.shape[:2]
+            y_coords, x_coords = np.mgrid[0:h, 0:w].astype(np.float32)
             
-            # Apply temporal smoothing if enabled
+            # Calculate new coordinates based on flow
+            # Invert flow direction to warp from prev to current
+            warp_x = (x_coords - flow[..., 0]).clip(0, w - 1)
+            warp_y = (y_coords - flow[..., 1]).clip(0, h - 1)
+            
+            # Prepare coordinate maps
+            coords = np.stack([warp_x, warp_y], axis=-1)
+            
+            # Remap previous edges using flow
+            warped_edges = cv2.remap(
+                self.prev_edges, 
+                coords, 
+                None, 
+                cv2.INTER_LINEAR
+            )
+            
+            # Blend current and flow-warped edges
+            # Adjust weight to favor warped edges from previous frames
+            flow_weight = self.flow_weight
+            blended_edges = cv2.addWeighted(
+                current_edges.astype(np.float32), 
+                1.0 - flow_weight,
+                warped_edges.astype(np.float32),
+                flow_weight,
+                0
+            )
+            
+            # Convert back to binary edges
+            result_edges = (blended_edges > 127).astype(np.uint8) * 255
+            
+            # Update previous frame and edges for next iteration
+            self.prev_gray = current_gray.copy()
+            
+            return result_edges
+            
+        except Exception as e:
+            logger.error(f"Error applying optical flow: {str(e)}")
+            return current_edges
+    
+    def _detect_artistic_lines(self, frame):
+        """
+        Refined line detection with attention to important features
+        
+        Args:
+            frame: Input BGR frame
+            
+        Returns:
+            Binary line map with artistic quality
+        """
+        try:
+            # Convert to grayscale
+            gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+            
+            # Apply bilateral filter for noise reduction
+            bilateral = cv2.bilateralFilter(gray, 9, 25, 25)
+            bilateral_strong = cv2.bilateralFilter(bilateral, 15, 40, 40)
+            
+            # Apply Canny with selective thresholds
+            high_threshold = int(200 * self.edge_threshold)
+            low_threshold = int(high_threshold * 0.4)
+            edges_canny = cv2.Canny(bilateral, low_threshold, high_threshold)
+            
+            # Apply Laplacian for additional detail
+            laplacian = cv2.Laplacian(bilateral_strong, cv2.CV_8U, ksize=3)
+            _, edges_laplacian = cv2.threshold(laplacian, 25, 255, cv2.THRESH_BINARY)
+            
+            # Combine edges
+            edges_combined = cv2.bitwise_or(edges_canny, edges_laplacian)
+            
+            # Apply face detection for better feature preservation
+            face_regions = np.zeros_like(gray)
+            if self.face_cascade is not None:
+                faces = self.face_cascade.detectMultiScale(gray, 1.3, 5)
+                
+                for (x, y, w, h) in faces:
+                    # Extended region to include neck and hair
+                    extended_y = max(0, y - int(h * 0.2))
+                    extended_h = min(gray.shape[0] - extended_y, int(h * 1.4))
+                    
+                    # Apply specific edge detection for facial features
+                    face_gray = gray[extended_y:extended_y + extended_h, x:x + w]
+                    if face_gray.size > 0:
+                        face_edges = cv2.Canny(face_gray, low_threshold * 0.7, high_threshold * 0.7)
+                        face_regions[extended_y:extended_y + extended_h, x:x + w] = face_edges
+            
+            # Combine face edges with general edges
+            edges_combined = cv2.bitwise_or(edges_combined, face_regions)
+            
+            # Clean up noise and small segments
+            num_labels, labels, stats, _ = cv2.connectedComponentsWithStats(edges_combined, connectivity=8)
+            
+            min_size = 40
+            max_size = int(frame.shape[0] * frame.shape[1] * 0.3)
+            filtered_edges = np.zeros_like(edges_combined)
+            
+            for i in range(1, num_labels):
+                component_size = stats[i, cv2.CC_STAT_AREA]
+                if min_size <= component_size <= max_size:
+                    filtered_edges[labels == i] = 255
+            
+            # Remove horizontal/vertical artifacts
+            h_kernel = np.ones((1, 7), np.uint8)
+            v_kernel = np.ones((7, 1), np.uint8)
+            
+            h_runs = cv2.morphologyEx(filtered_edges, cv2.MORPH_OPEN, h_kernel)
+            v_runs = cv2.morphologyEx(filtered_edges, cv2.MORPH_OPEN, v_kernel)
+            
+            h_v_runs = cv2.bitwise_or(h_runs, v_runs)
+            dilated_important = cv2.dilate(filtered_edges, np.ones((3,3), np.uint8))
+            unwanted_lines = cv2.bitwise_and(h_v_runs, cv2.bitwise_not(dilated_important))
+            filtered_edges = cv2.bitwise_and(filtered_edges, cv2.bitwise_not(unwanted_lines))
+            
+            # Apply thinning and controlled dilation for consistent lines
+            try:
+                edges_thinned = cv2.ximgproc.thinning(filtered_edges)
+                thin_kernel = np.ones((2, 2), np.uint8)
+                edges_stylized = cv2.dilate(edges_thinned, thin_kernel, iterations=1)
+            except:
+                kernel = np.ones((int(2 * self.edge_thickness), int(2 * self.edge_thickness)), np.uint8)
+                edges_stylized = cv2.dilate(filtered_edges, kernel, iterations=1)
+            
+            # Apply optical flow for temporal consistency if we have previous data
+            if self.prev_frame is not None and self.prev_edges is not None:
+                edges_stylized = self._apply_optical_flow(frame, edges_stylized)
+            
+            # Additional temporal smoothing (along with optical flow)
             if self.prev_edges is not None and self.temporal_smoothing > 0:
-                edges = (1 - self.temporal_smoothing) * edges + self.temporal_smoothing * self.prev_edges
+                weight = self.temporal_smoothing
+                edges_float = edges_stylized.astype(np.float32)
+                prev_float = self.prev_edges.astype(np.float32)
+                blended = cv2.addWeighted(edges_float, 1-weight, prev_float, weight, 0)
+                edges_result = (blended > 127).astype(np.uint8) * 255
+            else:
+                edges_result = edges_stylized
             
-            # Update previous edges
-            self.prev_edges = edges.copy()
+            # Store the current frame and edges for next iteration
+            self.prev_frame = frame.copy()
+            self.prev_gray = gray.copy()
+            self.prev_edges = edges_result.copy()
             
-            # Normalize and amplify edges
-            edges = cv2.normalize(edges, None, 0, 1, cv2.NORM_MINMAX)
-            edges = np.power(edges, 1.0 - self.edge_strength * 0.5)  # Adjust edge strength
-            
-            return edges
-            
-        except Exception as e:
-            logger.error(f"Error detecting edges: {str(e)}")
-            return np.zeros((height, width), dtype=np.float32)
-    
-    def _enhance_edges(self, edges):
-        """
-        Enhance and thicken edges
-        
-        Args:
-            edges: Edge map (0-1)
-            
-        Returns:
-            Enhanced binary edge map
-        """
-        try:
-            # Threshold edges to create binary mask
-            _, binary_edges = cv2.threshold(
-                (edges * 255).astype(np.uint8), 
-                int(50 * (1 - self.edge_strength)),  # Adaptive threshold based on edge strength
-                255, 
-                cv2.THRESH_BINARY
-            )
-            
-            # Apply dilation to thicken edges
-            if self.edge_thickness > 1.0:
-                kernel_size = max(1, int(self.edge_thickness * 1.5))
-                kernel = np.ones((kernel_size, kernel_size), np.uint8)
-                binary_edges = cv2.dilate(binary_edges, kernel, iterations=1)
-            
-            # Apply thinning if needed
-            if self.edge_thickness < 1.0:
-                try:
-                    binary_edges = cv2.ximgproc.thinning(binary_edges)
-                except:
-                    pass  # Ignore if ximgproc not available
-            
-            return binary_edges
+            return edges_result
             
         except Exception as e:
-            logger.error(f"Error enhancing edges: {str(e)}")
-            return np.zeros_like(edges, dtype=np.uint8)
+            logger.error(f"Error detecting artistic lines: {str(e)}")
+            return np.zeros_like(frame[:,:,0])
     
     def _quantize_colors(self, frame):
         """
-        Apply color quantization to reduce the number of colors
+        Apply color quantization with parameters for flat color regions
         
         Args:
             frame: Input BGR frame
@@ -269,179 +263,130 @@ class ScannerDarklyEffect:
             Color quantized frame
         """
         try:
-            # Apply bilateral blur for smoothing if enabled
+            # Convert to LAB color space for better perceptual results
+            lab_image = cv2.cvtColor(frame, cv2.COLOR_BGR2LAB)
+            
+            # Apply bilateral filter for flat regions
             if self.smoothing > 0:
-                sigma = 15 * self.smoothing
-                d = int(5 * self.smoothing) * 2 + 1
-                frame = cv2.bilateralFilter(frame, d, sigma, sigma)
-            
-            # Choose quantization method
-            if self.color_method == "kmeans":
-                return self._quantize_kmeans(frame)
-            elif self.color_method == "bilateral":
-                return self._quantize_bilateral(frame)
-            else:  # posterize
-                return self._quantize_posterize(frame)
+                d = int(12 * self.smoothing)
+                sigma_color = 50 * self.smoothing
+                sigma_space = 50 * self.smoothing
+                lab_filtered = np.zeros_like(lab_image)
                 
-        except Exception as e:
-            logger.error(f"Error quantizing colors: {str(e)}")
-            return frame
-    
-    def _quantize_kmeans(self, frame):
-        """Apply k-means clustering for color quantization"""
-        try:
-            # Convert to LAB color space for better color quantization
-            lab = cv2.cvtColor(frame, cv2.COLOR_BGR2LAB)
+                for i in range(3):
+                    if i == 0:  # L channel
+                        sig_c = sigma_color
+                    else:  # A and B channels
+                        sig_c = sigma_color * 2.2
+                        
+                    lab_filtered[:,:,i] = cv2.bilateralFilter(lab_image[:,:,i], d, sig_c, sigma_space)
+                
+                lab_smoothed = lab_filtered
+            else:
+                lab_smoothed = lab_image
             
-            # Reshape for k-means
-            pixels = lab.reshape(-1, 3).astype(np.float32)
+            # Boost saturation
+            if self.saturation != 1.0:
+                lab_saturated = lab_smoothed.copy().astype(np.float32)
+                mean_a = np.mean(lab_saturated[:,:,1])
+                mean_b = np.mean(lab_saturated[:,:,2])
+                
+                lab_saturated[:,:,1] = (lab_saturated[:,:,1] - mean_a) * self.saturation + mean_a
+                lab_saturated[:,:,2] = (lab_saturated[:,:,2] - mean_b) * self.saturation + mean_b
+                
+                lab_saturated[:,:,1] = np.clip(lab_saturated[:,:,1], 0, 255)
+                lab_saturated[:,:,2] = np.clip(lab_saturated[:,:,2], 0, 255)
+                
+                lab_prepared = lab_saturated.astype(np.uint8)
+            else:
+                lab_prepared = lab_smoothed
             
-            # Set up k-means parameters
-            criteria = (cv2.TERM_CRITERIA_EPS + cv2.TERM_CRITERIA_MAX_ITER, 100, 0.2)
+            # Apply k-means clustering for color quantization
+            h, w = frame.shape[:2]
+            pixels = lab_prepared.reshape(-1, 3).astype(np.float32)
+            
+            criteria = (cv2.TERM_CRITERIA_EPS + cv2.TERM_CRITERIA_MAX_ITER, 20, 0.2)
             k = self.num_colors
             
-            # Apply k-means clustering
+            # Generate initial centers for better quantization
+            attempts = 30
             _, labels, centers = cv2.kmeans(
                 pixels, 
                 k, 
                 None, 
                 criteria, 
-                10, 
-                cv2.KMEANS_RANDOM_CENTERS
+                attempts,
+                cv2.KMEANS_PP_CENTERS  
             )
             
-            # Map pixels to their closest center
+            # Map pixels to centers
             centers = centers.astype(np.uint8)
-            quantized_lab = centers[labels.flatten()].reshape(frame.shape)
-            
-            # Apply saturation adjustment in LAB space
-            if self.saturation != 1.0:
-                # LAB: L (0-100), a (-128 to 127), b (-128 to 127)
-                # Adjust a, b channels (color components)
-                quantized_lab[:, :, 1] = np.clip(
-                    quantized_lab[:, :, 1] * self.saturation, 
-                    -128, 
-                    127
-                ).astype(np.uint8)
-                
-                quantized_lab[:, :, 2] = np.clip(
-                    quantized_lab[:, :, 2] * self.saturation, 
-                    -128, 
-                    127
-                ).astype(np.uint8)
+            quantized_lab = centers[labels.flatten()].reshape(lab_prepared.shape)
             
             # Convert back to BGR
             quantized = cv2.cvtColor(quantized_lab, cv2.COLOR_LAB2BGR)
             
-            # Apply temporal smoothing if enabled
-            if self.prev_colors is not None and self.temporal_smoothing > 0:
+            # Apply bilateral filter for smoother regions
+            quantized = cv2.bilateralFilter(quantized, 7, 35, 35)
+            
+            # Apply optical flow warping to colors for consistency
+            if self.prev_frame is not None and self.prev_colors is not None and self.prev_gray is not None:
+                # Calculate optical flow
+                current_gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+                flow = cv2.calcOpticalFlowFarneback(
+                    self.prev_gray,
+                    current_gray,
+                    None,
+                    **self.flow_params
+                )
+                
+                # Create a grid of coordinates
+                h, w = frame.shape[:2]
+                y_coords, x_coords = np.mgrid[0:h, 0:w].astype(np.float32)
+                
+                # Calculate warped coordinates
+                warp_x = (x_coords - flow[..., 0]).clip(0, w - 1)
+                warp_y = (y_coords - flow[..., 1]).clip(0, h - 1)
+                
+                # Prepare coordinate maps
+                coords = np.stack([warp_x, warp_y], axis=-1)
+                
+                # Remap previous colors using flow
+                warped_colors = cv2.remap(
+                    self.prev_colors,
+                    coords,
+                    None,
+                    cv2.INTER_LINEAR
+                )
+                
+                # Blend with lower weight than edges
+                flow_weight = self.flow_weight * 0.8  # Lower weight for colors
                 quantized = cv2.addWeighted(
-                    quantized, 
-                    1 - self.temporal_smoothing, 
-                    self.prev_colors, 
-                    self.temporal_smoothing, 
+                    quantized,
+                    1.0 - flow_weight,
+                    warped_colors,
+                    flow_weight,
                     0
                 )
             
-            # Update previous colors
+            # Apply additional temporal smoothing
+            if self.prev_colors is not None and self.temporal_smoothing > 0:
+                weight = self.temporal_smoothing
+                quantized = cv2.addWeighted(
+                    quantized,
+                    1-weight,
+                    self.prev_colors,
+                    weight,
+                    0
+                )
+            
+            # Store for next frame
             self.prev_colors = quantized.copy()
             
             return quantized
             
         except Exception as e:
-            logger.error(f"Error in k-means quantization: {str(e)}")
-            return frame
-    
-    def _quantize_bilateral(self, frame):
-        """Apply bilateral filtering for color simplification"""
-        try:
-            # Apply strong bilateral filtering multiple times
-            result = frame.copy()
-            iterations = max(1, int(3 * self.smoothing))
-            
-            for _ in range(iterations):
-                result = cv2.bilateralFilter(
-                    result, 
-                    d=9, 
-                    sigmaColor=75, 
-                    sigmaSpace=75
-                )
-            
-            # Apply posterization to further reduce colors
-            return self._quantize_posterize(result)
-            
-        except Exception as e:
-            logger.error(f"Error in bilateral quantization: {str(e)}")
-            return frame
-    
-    def _quantize_posterize(self, frame):
-        """Apply posterization (reduce number of intensity levels)"""
-        try:
-            # Calculate number of levels per channel based on num_colors
-            levels = max(2, int(np.cbrt(self.num_colors)))
-            
-            # Create LUT (Look-Up Table) for posterization
-            lut = np.zeros(256, dtype=np.uint8)
-            for i in range(256):
-                lut[i] = np.clip(int(levels * i / 256) * (256 // levels), 0, 255)
-            
-            # Apply LUT to each channel
-            result = frame.copy()
-            for c in range(3):  # BGR
-                result[:, :, c] = cv2.LUT(frame[:, :, c], lut)
-            
-            # Apply saturation adjustment
-            if self.saturation != 1.0:
-                # Convert to HSV for saturation adjustment
-                hsv = cv2.cvtColor(result, cv2.COLOR_BGR2HSV).astype(np.float32)
-                hsv[:, :, 1] = np.clip(hsv[:, :, 1] * self.saturation, 0, 255)
-                result = cv2.cvtColor(hsv.astype(np.uint8), cv2.COLOR_HSV2BGR)
-            
-            # Apply temporal smoothing if enabled
-            if self.prev_colors is not None and self.temporal_smoothing > 0:
-                result = cv2.addWeighted(
-                    result, 
-                    1 - self.temporal_smoothing, 
-                    self.prev_colors, 
-                    self.temporal_smoothing, 
-                    0
-                )
-            
-            # Update previous colors
-            self.prev_colors = result.copy()
-            
-            return result
-            
-        except Exception as e:
-            logger.error(f"Error in posterize quantization: {str(e)}")
-            return frame
-    
-    def _merge_edges_with_colors(self, frame, edges_binary):
-        """
-        Merge edge map with the color quantized frame
-        
-        Args:
-            frame: Color quantized frame
-            edges_binary: Binary edge map
-            
-        Returns:
-            Frame with edges overlaid
-        """
-        try:
-            # Create a mask for the edges
-            edges_mask = edges_binary > 0
-            
-            # Create the result image
-            result = frame.copy()
-            
-            # Overlay edges
-            if self.preserve_black:
-                result[edges_mask] = [0, 0, 0]  # Black edges
-            
-            return result
-            
-        except Exception as e:
-            logger.error(f"Error merging edges with colors: {str(e)}")
+            logger.error(f"Error quantizing colors: {str(e)}")
             return frame
     
     def process_frame(self, frame):
@@ -452,26 +397,49 @@ class ScannerDarklyEffect:
             frame: Input BGR frame
             
         Returns:
-            Processed frame with Scanner Darkly effect
+            Processed frame
         """
         try:
-            # Load the neural network if not already loaded
-            net = self._load_neural_network()
-            if net is None:
-                logger.error("Failed to load neural network, returning original frame")
-                return frame
+            # 1. Apply color quantization
+            quantized = self._quantize_colors(frame)
             
-            # Step 1: Detect edges using neural network
-            edges = self._detect_edges(frame, net)
+            # 2. Detect artistic lines with optical flow consistency
+            lines = self._detect_artistic_lines(frame)
             
-            # Step 2: Enhance and thicken edges
-            edges_binary = self._enhance_edges(edges)
+            # 3. Combine lines with quantized colors
+            result = quantized.copy()
             
-            # Step 3: Apply color quantization
-            quantized_frame = self._quantize_colors(frame)
+            # Apply lines using appropriate color
+            lines_mask = lines > 0
             
-            # Step 4: Merge edges with quantized colors
-            result = self._merge_edges_with_colors(quantized_frame, edges_binary)
+            if self.preserve_black:
+                edge_color = [0, 0, 0]  # Black
+            else:
+                edge_color = [30, 30, 30]  # Darker gray
+                
+            result[lines_mask] = edge_color
+            
+            # 4. Subtle darkening effect around edges
+            edge_expansion = cv2.dilate(lines_mask.astype(np.uint8), np.ones((2,2), np.uint8)) - lines_mask.astype(np.uint8)
+            edge_expansion_mask = edge_expansion > 0
+            
+            result[edge_expansion_mask] = np.clip(result[edge_expansion_mask] * 0.9, 0, 255).astype(np.uint8)
+            
+            # 5. Overall result consistency through optical flow
+            if self.prev_result is not None:
+                # Apply a final temporal blend with previous result
+                # This ensures overall consistency
+                final_weight = min(0.3, self.temporal_smoothing)  # Cap at 0.3 to avoid oversmoothing
+                result = cv2.addWeighted(
+                    result,
+                    1 - final_weight,
+                    self.prev_result,
+                    final_weight,
+                    0
+                )
+            
+            # Store result for next frame
+            self.prev_result = result.copy()
             
             return result
             
@@ -489,182 +457,155 @@ class ScannerDarklyEffect:
         Returns:
             List of processed frames
         """
+        logger.info(f"*** PROCESSING BATCH OF {len(frames)} FRAMES WITH SCANNER DARKLY v{VERSION} ***")
+        
+        # Reset state at the beginning of each batch
+        self.prev_frame = None
+        self.prev_gray = None
+        self.prev_edges = None
+        self.prev_colors = None
+        self.prev_result = None
+        
         results = []
+        for i, frame in enumerate(frames):
+            logger.info(f"Processing frame {i+1}/{len(frames)}")
+            result = self.process_frame(frame)
+            results.append(result)
         
-        # Load the neural network once for all frames
-        net = self._load_neural_network()
-        if net is None:
-            logger.error("Failed to load neural network, returning original frames")
-            return frames
-        
-        # Process each frame
-        for frame in frames:
-            try:
-                # Step 1: Detect edges using neural network
-                edges = self._detect_edges(frame, net)
-                
-                # Step 2: Enhance and thicken edges
-                edges_binary = self._enhance_edges(edges)
-                
-                # Step 3: Apply color quantization
-                quantized_frame = self._quantize_colors(frame)
-                
-                # Step 4: Merge edges with quantized colors
-                result = self._merge_edges_with_colors(quantized_frame, edges_binary)
-                
-                results.append(result)
-                
-            except Exception as e:
-                logger.error(f"Error processing frame in batch: {str(e)}")
-                results.append(frame)  # Add original frame if processing fails
-        
+        logger.info(f"*** COMPLETED BATCH PROCESSING WITH SCANNER DARKLY v{VERSION} ***")
         return results
 
+# Command generation function that uses the ScannerDarklyEffect class
 def get_command(input_path, output_path, params=None):
     """
     Generate a shell command for applying the Scanner Darkly effect
-    
-    This version tries to use the neural implementation first
+    Uses a minimal launcher script that imports the ScannerDarklyEffect class
     """
-    import os
+    logger.info(f"*** SCANNER DARKLY v{VERSION} - GENERATING COMMAND ***")
+    
     import tempfile
+    import os
     
-    # Check if model files exist in common locations
-    model_locations = [
-        ("/opt/video-processor/model_weights/hed.caffemodel", 
-         "/opt/video-processor/model_weights/hed.prototxt"),
-        ("/opt/video-processor/hed.caffemodel", 
-         "/opt/video-processor/hed.prototxt")
-    ]
+    # Create a minimal launcher script that imports the class
+    temp_script = tempfile.NamedTemporaryFile(mode='w', suffix='.py', delete=False)
     
-    model_found = False
-    for model_path, prototxt_path in model_locations:
-        if os.path.exists(model_path) and os.path.exists(prototxt_path):
-            logger.info(f"Found HED model files at {model_path}")
-            model_found = True
-            break
+    # Get the full path to this file for importing
+    current_file_path = os.path.abspath(__file__)
     
-    if model_found:
-        # Create a temporary script file to run the neural implementation
-        temp_script = tempfile.NamedTemporaryFile(mode='w', suffix='.py', delete=False)
-        
-        # Write the necessary imports and processing code
-        temp_script.write("""
-#!/usr/bin/env python3
+    # Write a simple launcher script that imports and uses our class
+    script_content = f"""#!/usr/bin/env python3
+import sys
+import os
 import cv2
 import numpy as np
-import os
-import sys
+import logging
+
+# Configure logging
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger()
+
+# Add the directory containing scanner_darkly.py to the Python path
+sys.path.append(os.path.dirname("{current_file_path}"))
+
+# Import the ScannerDarklyEffect class
+from scanner_darkly import ScannerDarklyEffect
 
 def main():
+    # Get input and output paths from command-line arguments
     input_path = sys.argv[1]
     output_path = sys.argv[2]
-    model_path = sys.argv[3]
-    prototxt_path = sys.argv[4]
     
-    print(f"Loading model from {model_path}")
-    net = cv2.dnn.readNetFromCaffe(prototxt_path, model_path)
+    logger.info(f"Processing video: {{input_path}} -> {{output_path}}")
     
-    # Open the video
-    cap = cv2.VideoCapture(input_path)
-    width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
-    height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
-    fps = cap.get(cv2.CAP_PROP_FPS)
-    
-    # Create output video
-    fourcc = cv2.VideoWriter_fourcc(*'mp4v')
-    out = cv2.VideoWriter(output_path, fourcc, fps, (width, height))
-    
-    # Process frames
-    prev_edges = None
-    prev_colors = None
-    
-    while True:
-        ret, frame = cap.read()
-        if not ret:
-            break
+    try:
+        # Create an instance of ScannerDarklyEffect with optimized parameters
+        effect = ScannerDarklyEffect(
+            edge_strength=0.9,
+            edge_thickness=0.7,
+            edge_threshold=0.65,
+            num_colors=5,
+            smoothing=0.9,
+            saturation=1.15,
+            temporal_smoothing=0.2,
+            preserve_black=True
+        )
         
-        # Edge detection
-        blob = cv2.dnn.blobFromImage(frame, 1.0, (width, height), (104.00698793, 116.66876762, 122.67891434), swapRB=False)
-        net.setInput(blob)
-        edges = net.forward()[0, 0]
+        # Open the input video
+        cap = cv2.VideoCapture(input_path)
+        if not cap.isOpened():
+            logger.error(f"Could not open video: {{input_path}}")
+            return 1
+            
+        # Get video properties
+        width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
+        height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+        fps = cap.get(cv2.CAP_PROP_FPS)
+        total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
         
-        # Temporal smoothing
-        if prev_edges is not None:
-            edges = edges * 0.7 + prev_edges * 0.3
-        prev_edges = edges.copy()
+        logger.info(f"Video specs: {{width}}x{{height}} at {{fps}} fps, {{total_frames}} frames")
         
-        # Threshold edges
-        edges = (edges > 0.2).astype(np.uint8) * 255
+        # Create output video writer
+        fourcc = cv2.VideoWriter_fourcc(*'mp4v')
+        out = cv2.VideoWriter(output_path, fourcc, fps, (width, height))
+        if not out.isOpened():
+            logger.error(f"Could not create output video: {{output_path}}")
+            return 1
         
-        # Enhance edges
-        kernel = np.ones((3,3), np.uint8)
-        edges = cv2.dilate(edges, kernel, iterations=1)
+        # Process video in batches
+        batch_size = 30
+        frames = []
+        processed_count = 0
         
-        # Color quantization
-        lab = cv2.cvtColor(frame, cv2.COLOR_BGR2LAB)
-        pixels = lab[:,:,0].reshape((-1, 1)).astype(np.float32)
-        criteria = (cv2.TERM_CRITERIA_EPS + cv2.TERM_CRITERIA_MAX_ITER, 100, 0.2)
-        _, labels, centers = cv2.kmeans(pixels, 5, None, criteria, 10, cv2.KMEANS_RANDOM_CENTERS)
-        lab[:,:,0] = centers[labels.flatten()].reshape(lab[:,:,0].shape)
-        quantized = cv2.cvtColor(lab, cv2.COLOR_LAB2BGR)
+        while True:
+            ret, frame = cap.read()
+            if not ret:
+                break
+                
+            frames.append(frame)
+            
+            # Process when batch is full or end of video
+            if len(frames) >= batch_size or processed_count + len(frames) >= total_frames:
+                # Process the batch using our class
+                logger.info(f"Processing batch of {{len(frames)}} frames")
+                processed_frames = effect.process_batch(frames)
+                
+                # Write processed frames
+                for processed_frame in processed_frames:
+                    out.write(processed_frame)
+                    
+                # Log progress
+                processed_count += len(frames)
+                logger.info(f"Processed {{processed_count}}/{{total_frames}} frames ({{processed_count/total_frames*100:.1f}}%)")
+                
+                # Clear batch
+                frames = []
         
-        # Temporal color smoothing
-        if prev_colors is not None:
-            quantized = cv2.addWeighted(quantized, 0.7, prev_colors, 0.3, 0)
-        prev_colors = quantized.copy()
+        # Clean up
+        cap.release()
+        out.release()
         
-        # Apply edges
-        edges_mask = (edges > 0)
-        result = quantized.copy()
-        result[edges_mask] = [0, 0, 0]
+        # Convert to h264 using FFmpeg for better compatibility
+        logger.info("Converting output to h264")
+        os.system(f'ffmpeg -y -i "{{output_path}}" -c:v libx264 -pix_fmt yuv420p -preset medium -crf 18 "{{output_path}}.tmp.mp4"')
+        os.replace(f"{{output_path}}.tmp.mp4", output_path)
         
-        # Write frame
-        out.write(result)
-    
-    # Clean up
-    cap.release()
-    out.release()
-    
-    # Convert to h264
-    os.system(f'ffmpeg -y -i "{output_path}" -c:v libx264 -pix_fmt yuv420p -preset medium -crf 18 "{output_path}.tmp.mp4"')
-    os.replace(f"{output_path}.tmp.mp4", output_path)
-    
-    return 0
+        logger.info(f"Successfully processed {{processed_count}} frames. Output saved to {{output_path}}")
+        return 0
+        
+    except Exception as e:
+        logger.error(f"Error processing video: {{str(e)}}")
+        import traceback
+        traceback.print_exc()
+        return 1
 
 if __name__ == "__main__":
-    main()
-""")
-        temp_script.close()
-        os.chmod(temp_script.name, 0o755)
-        
-        # Return command to run the script
-        return f"python3 {temp_script.name} '{input_path}' '{output_path}' '{model_path}' '{prototxt_path}'"
+    sys.exit(main())
+"""
     
-    # Fallback to FFmpeg
-    logger.info(f"Using SCANNER DARKLY fallback FFmpeg command (v{VERSION})")
+    # Write the script to the file
+    temp_script.write(script_content)
+    temp_script.close()
+    os.chmod(temp_script.name, 0o755)
     
-    return (
-        f'ffmpeg -y -i "{input_path}" '
-        f'-vf "'
-        # Edge detection using FFmpeg filters
-        f'split=2[a][b];'
-        f'[a]edgedetect=mode=colormix:high=0.15:low=0.1[edges];'
-        
-        # Color quantization
-        f'[b]eq=saturation=1.3,'  # Increase saturation
-        f'boxblur=10:5,'  # Simplify colors
-        f'eq=gamma=1.5[colors];'  # Boost colors
-        
-        # Combine edges with colors
-        f'[colors][edges]blend=all_mode=multiply'
-        f'" '
-        
-        # Output settings
-        f'-c:v libx264 '
-        f'-pix_fmt yuv420p '
-        f'-preset medium '
-        f'-crf 18 '
-        f'-metadata title="Scanner Darkly Effect" '
-        f'"{output_path}"'
-    )
+    # Return command to run the script
+    return f"python3 {temp_script.name} '{input_path}' '{output_path}'"
