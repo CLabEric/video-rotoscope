@@ -1,98 +1,161 @@
-// src/components/DashboardLoggedOut.tsx
+// packages/frontend/src/components/DashboardLoggedOut.tsx
 "use client";
 
-import React from 'react';
+import React, { useState } from 'react';
 import { useAuthContext } from "@/contexts/AuthContext";
-import { Film, Lock, Video, Play, ArrowRight } from "lucide-react";
+import { ArrowRight, Play, Check } from "lucide-react";
 
-const FeatureCard: React.FC<{
-  icon: React.ReactNode;
-  title: string;
+interface EffectButtonProps {
+  name: string;
   description: string;
-}> = ({ icon, title, description }) => (
-  <div className="bg-white p-6 rounded-xl shadow-md border border-orange-100">
-    <div className="bg-orange-100 w-12 h-12 rounded-full flex items-center justify-center mb-4">
-      {icon}
+  isActive: boolean;
+  onClick: () => void;
+}
+
+type EffectType = "scanner-darkly" | "silent-movie" | "technicolor";
+
+interface EffectInfo {
+  name: string;
+  description: string;
+}
+
+const EffectButton: React.FC<EffectButtonProps> = ({ name, description, isActive, onClick }) => (
+  <button
+    onClick={onClick}
+    className={`flex items-start text-left p-4 rounded-lg transition-all w-full ${
+      isActive 
+        ? "bg-orange-100 border-2 border-orange-300 shadow-md" 
+        : "bg-white border border-gray-200 hover:border-orange-200 hover:bg-orange-50"
+    }`}
+  >
+    <div className="flex-grow">
+      <div className="flex items-center gap-2">
+        {isActive && <Check className="w-4 h-4 text-orange-500" />}
+        <h3 className="font-medium text-gray-900">{name}</h3>
+      </div>
+      <p className="text-xs text-gray-600 mt-1">{description}</p>
     </div>
-    <h3 className="text-lg font-semibold text-orange-900 mb-2">{title}</h3>
-    <p className="text-orange-700 text-sm">{description}</p>
-  </div>
+  </button>
 );
 
 const DashboardLoggedOut: React.FC = () => {
   const { signInWithGoogle } = useAuthContext();
+  const [activeEffect, setActiveEffect] = useState<EffectType>("scanner-darkly");
+  
+  const effectDetails: Record<EffectType, EffectInfo> = {
+    "scanner-darkly": {
+      name: "Scanner Darkly",
+      description: "Neural network-based rotoscoping effect with edge detection and color quantization."
+    },
+    "silent-movie": {
+      name: "Silent Movie",
+      description: "Classic black and white silent film effect with vintage artifacts and film grain."
+    },
+    "technicolor": {
+      name: "Technicolor",
+      description: "Vibrant saturated colors like early color films from the golden age of cinema."
+    }
+  };
 
   return (
-    <div className="max-w-4xl mx-auto">
-      <div className="bg-gradient-to-r from-orange-500 to-orange-600 rounded-2xl overflow-hidden shadow-lg mb-12">
-        <div className="p-8 md:p-12">
-          <div className="max-w-xl">
-            <h1 className="text-3xl md:text-4xl font-bold text-white mb-4">
-              Transform Your Videos with AI
-            </h1>
-            <p className="text-orange-100 mb-8">
-              Sign in to access your personal dashboard and start creating stunning visual effects with our AI-powered video processing.
+    <div className="max-w-6xl mx-auto">
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-8">
+        {/* Left Column - Technical Drawing and Text */}
+        <div className="md:col-span-1">
+          <div className="bg-white p-6 rounded-lg shadow-md border border-gray-200 mb-6">
+            <img 
+              src="/technical-illustration.png" 
+              alt="Technical Drawing of Animation Device" 
+              className="w-full h-auto object-contain mb-4"
+            />
+            <h3 className="text-sm font-semibold text-gray-900">Traditional Animation Technique</h3>
+            <p className="text-xs text-gray-600">
+              Based on rotoscoping technology first patented in 1917, now powered by neural networks
             </p>
-            <div className="bg-white/10 p-4 rounded-lg backdrop-blur-sm border border-white/20 mb-6">
-              <div className="flex items-center gap-3">
-                <Lock className="w-5 h-5 text-white flex-shrink-0" />
-                <p className="text-white text-sm">
-                  Your videos are private and automatically deleted after 24 hours.
-                </p>
-              </div>
+          </div>
+          
+          <div className="bg-white p-6 rounded-lg shadow-md border border-gray-200">
+            <h2 className="font-bold text-gray-900 mb-4">Choose an Effect:</h2>
+            <div className="space-y-3">
+              <EffectButton 
+                name="Scanner Darkly" 
+                description="Neural network rotoscoping"
+                isActive={activeEffect === "scanner-darkly"}
+                onClick={() => setActiveEffect("scanner-darkly")}
+              />
+              <EffectButton 
+                name="Silent Movie" 
+                description="Classic black & white"
+                isActive={activeEffect === "silent-movie"}
+                onClick={() => setActiveEffect("silent-movie")}
+              />
+              <EffectButton 
+                name="Technicolor" 
+                description="Vibrant color processing"
+                isActive={activeEffect === "technicolor"}
+                onClick={() => setActiveEffect("technicolor")}
+              />
             </div>
+            
             <button
               onClick={signInWithGoogle}
-              className="flex items-center gap-2 bg-white text-orange-600 hover:bg-orange-50 px-6 py-3 rounded-lg font-medium transition-colors"
+              className="mt-6 bg-orange-500 hover:bg-orange-600 text-white px-5 py-3 rounded-lg font-medium transition-all w-full flex items-center justify-center gap-2"
             >
-              Sign in to Continue
+              Sign in to Start
               <ArrowRight className="w-4 h-4" />
             </button>
           </div>
         </div>
-        <div className="flex overflow-hidden h-20 bg-orange-600 relative">
-          {Array.from({ length: 20 }).map((_, i) => (
-            <div key={i} 
-              className="flex-shrink-0 h-full w-16 md:w-24 border-r border-orange-500/50 flex items-center justify-center"
-              style={{ opacity: 0.1 + (i % 5) * 0.2 }}
-            >
-              <Film className="w-8 h-8 text-white" />
+        
+        {/* Right Column - Video Comparison */}
+        <div className="md:col-span-2">
+          <div className="bg-white p-6 rounded-lg shadow-md border border-gray-200 h-full">
+            <h1 className="text-2xl font-bold text-gray-900 mb-4">
+              Transform Your Videos with AI
+            </h1>
+            <p className="text-gray-600 mb-6">
+              Apply professional-grade effects including rotoscoping, film emulation, and more. See the comparison below.
+            </p>
+            
+            <div className="grid grid-cols-2 gap-4 mb-6">
+              <div className="bg-gray-900 rounded-lg overflow-hidden">
+                <div className="bg-gray-800 text-gray-200 text-sm font-medium p-2">
+                  Original Video
+                </div>
+                <div className="aspect-video">
+                  <img 
+                    src="/examples/original.jpg" 
+                    alt="Original video" 
+                    className="w-full h-full object-cover"
+                  />
+                </div>
+              </div>
+              
+              <div className="bg-gray-900 rounded-lg overflow-hidden">
+                <div className="bg-gray-800 text-gray-200 text-sm font-medium p-2 flex items-center justify-between">
+                  <span>{effectDetails[activeEffect].name}</span>
+                  <div className="bg-orange-500 text-white text-xs px-2 py-0.5 rounded">
+                    AI-Powered
+                  </div>
+                </div>
+                <div className="aspect-video">
+                  <img 
+                    src={`/examples/${activeEffect}.jpg`} 
+                    alt="Processed video" 
+                    className="w-full h-full object-cover"
+                  />
+                </div>
+              </div>
             </div>
-          ))}
-          <div className="absolute inset-0 bg-gradient-to-r from-orange-600 via-transparent to-orange-600" />
+            
+            <div className="bg-orange-50 border border-orange-100 rounded-lg p-4">
+              <h3 className="font-semibold text-orange-800 mb-1">About {effectDetails[activeEffect].name}</h3>
+              <p className="text-orange-700 text-sm">
+                {effectDetails[activeEffect].description} This effect transforms your videos into stunning artistic creations with just a few clicks.
+              </p>
+            </div>
+          </div>
         </div>
-      </div>
-
-      <h2 className="text-2xl font-bold text-orange-900 mb-6 text-center">
-        What You Can Do
-      </h2>
-
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-12">
-        <FeatureCard
-          icon={<Video className="w-6 h-6 text-orange-600" />}
-          title="Process Any Video"
-          description="Upload videos from your device and transform them with powerful visual effects."
-        />
-        <FeatureCard
-          icon={<Play className="w-6 h-6 text-orange-600" />}
-          title="AI-Powered Effects"
-          description="Apply neural network-based rotoscoping and other advanced effects with a single click."
-        />
-        <FeatureCard
-          icon={<Film className="w-6 h-6 text-orange-600" />}
-          title="Manage Your Collection"
-          description="Access all your processed videos in one place and download them to keep forever."
-        />
-      </div>
-
-      <div className="text-center">
-        <button
-          onClick={signInWithGoogle}
-          className="inline-flex items-center gap-2 bg-orange-500 hover:bg-orange-600 text-white px-6 py-3 rounded-lg font-medium transition-colors"
-        >
-          Sign in with Google
-          <ArrowRight className="w-4 h-4" />
-        </button>
       </div>
     </div>
   );

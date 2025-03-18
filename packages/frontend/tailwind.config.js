@@ -1,3 +1,5 @@
+// packages/frontend/tailwind.config.js - Update this file
+
 /** @type {import('tailwindcss').Config} */
 module.exports = {
   darkMode: ["class"],
@@ -18,6 +20,7 @@ module.exports = {
     extend: {
       fontFamily: {
         baskerville: ["Libre Baskerville", "serif"],
+        cinematic: ["Bebas Neue", "sans-serif"],
       },
       colors: {
         border: "hsl(var(--border))",
