@@ -1,14 +1,14 @@
-"use client"
-
+// Modify packages/frontend/src/app/page.tsx to use a single-page approach
+"use client";
 import React, { useState, useEffect } from 'react';
 import VideoUpload from '@/components/VideoUpload';
 import UserVideos from '@/components/UserVideos';
-import DashboardLoggedOut from '@/components/DashboardLoggedOut';
 import Footer from '@/components/Footer';
+import DashboardLoggedOut from '@/components/DashboardLoggedOut';
 import { Upload, Film } from 'lucide-react';
 import { useAuthContext } from '@/contexts/AuthContext';
 
-export default function Dashboard() {
+export default function HomePage() {
   const [activeTab, setActiveTab] = useState<string>("upload");
   const { user, loading } = useAuthContext();
 
@@ -25,7 +25,7 @@ export default function Dashboard() {
         <main className="flex-grow container mx-auto py-8 px-4 max-w-6xl flex items-center justify-center">
           <div className="text-center">
             <div className="animate-spin rounded-full h-12 w-12 border-t-2 border-b-2 border-orange-500 mx-auto mb-4"></div>
-            <p className="text-orange-700">Loading your dashboard...</p>
+            <p className="text-orange-700">Loading...</p>
           </div>
         </main>
         <Footer />

@@ -9,7 +9,8 @@ import { getUploadUrl, queueProcessing, checkProcessingStatus } from "@/lib/aws"
 import { useAuthContext } from "@/contexts/AuthContext";
 import EffectSelector from "./EffectSelector";
 import VideoDisplay from "./VideoDisplay";
-import stripePromise from '@/lib/stripe';
+import PaymentModal from "./PaymentModal";
+
 interface VideoUploadProps {
   onProcessingComplete?: () => void;
 }
@@ -25,6 +26,8 @@ const VideoUpload: React.FC<VideoUploadProps> = ({ onProcessingComplete }) => {
   const [isProcessing, setIsProcessing] = useState(false);
   const [processingError, setProcessingError] = useState<string | null>(null);
   const [elapsedTime, setElapsedTime] = useState(0);
+  const [showPayment, setShowPayment] = useState(false);
+  const [uploadedVideoKey, setUploadedVideoKey] = useState("");
   const { userId } = useAuthContext();
 
   const processingTimerRef = useRef<NodeJS.Timeout | null>(null);
@@ -49,83 +52,123 @@ const VideoUpload: React.FC<VideoUploadProps> = ({ onProcessingComplete }) => {
     }
   };
 
-	const handleUpload = async (file: File) => {
-		try {
-			clearPreviousVideo();
-			
-			// First set up the video preview
-			const previewUrl = URL.createObjectURL(file);
-			setPreview(previewUrl);
-			setVideoFile(file);
-			
-			// Start the upload process
-			setIsUploading(true);
-			setUploadProgress(0);
-			
-			const { url, key } = await getUploadUrl(file.name, file.type);
+  const handleUpload = async (file: File) => {
+    try {
+      clearPreviousVideo();
+      
+      // First set up the video preview
+      const previewUrl = URL.createObjectURL(file);
+      setPreview(previewUrl);
+      setVideoFile(file);
+      
+      // Start the upload process
+      setIsUploading(true);
+      setUploadProgress(0);
+      
+      const { url, key } = await getUploadUrl(file.name, file.type);
+      setUploadedVideoKey(key);
 
-			const xhr = new XMLHttpRequest();
-			xhr.upload.onprogress = (event) => {
-			if (event.lengthComputable) {
-				const percentComplete = (event.loaded / event.total) * 100;
-				setUploadProgress(Math.round(percentComplete));
-			}
-			};
+      const xhr = new XMLHttpRequest();
+      xhr.upload.onprogress = (event) => {
+        if (event.lengthComputable) {
+          const percentComplete = (event.loaded / event.total) * 100;
+          setUploadProgress(Math.round(percentComplete));
+        }
+      };
 
-			await new Promise<void>((resolve, reject) => {
-			xhr.open("PUT", url, true);
-			xhr.setRequestHeader("Content-Type", file.type);
-			xhr.onload = () => xhr.status === 200 ? resolve() : reject(new Error(`Upload failed with status ${xhr.status}`));
-			xhr.onerror = () => reject(new Error("Upload failed"));
-			xhr.send(file);
-			});
+      await new Promise<void>((resolve, reject) => {
+        xhr.open("PUT", url, true);
+        xhr.setRequestHeader("Content-Type", file.type);
+        xhr.onload = () => xhr.status === 200 ? resolve() : reject(new Error(`Upload failed with status ${xhr.status}`));
+        xhr.onerror = () => reject(new Error("Upload failed"));
+        xhr.send(file);
+      });
 
-			// After upload completes, redirect to Stripe
-			setIsUploading(false);
-			
-			// Get Stripe instance
-			const stripe = await stripePromise;
-			if (!stripe) throw new Error('Stripe failed to load');
-			
-			// Select the correct price ID based on effect
-			const priceId = selectedEffect === 'scanner-darkly' 
-			? process.env.NEXT_PUBLIC_STRIPE_PREMIUM_PRICE_ID 
-			: process.env.NEXT_PUBLIC_STRIPE_STANDARD_PRICE_ID;
-			
-			if (!priceId) {
-			throw new Error('Price ID not configured');
-			}
-			
-			// Redirect to Stripe Checkout
-			const { error } = await stripe.redirectToCheckout({
-			lineItems: [
-				{
-				price: priceId,
-				quantity: 1,
-				},
-			],
-			mode: 'payment',
-			successUrl: `${window.location.origin}/#payment-success?videoKey=${encodeURIComponent(key)}&effectType=${encodeURIComponent(selectedEffect)}&userId=${encodeURIComponent(userId)}`,
-			cancelUrl: `${window.location.origin}/dashboard`,
-			});
-			
-			if (error) {
-			throw new Error(error.message);
-			}
-			
-		} catch (error) {
-			console.error("Upload error:", error);
-			setProcessingError(error instanceof Error ? error.message : "An unknown error occurred");
-			setIsProcessing(false);
-			
-			// Clear timers
-			if (processingTimerRef.current) {
-			clearInterval(processingTimerRef.current);
-			processingTimerRef.current = null;
-			}
-		} finally {
-			setIsUploading(false);
+      // After upload completes, show payment modal
+      setIsUploading(false);
+      setShowPayment(true);
+      
+    } catch (error) {
+      console.error("Upload error:", error);
+      setProcessingError(error instanceof Error ? error.message : "An unknown error occurred");
+      setIsProcessing(false);
+      setIsUploading(false);
+      
+      // Clear timers
+      if (processingTimerRef.current) {
+        clearInterval(processingTimerRef.current);
+        processingTimerRef.current = null;
+      }
+    }
+  };
+
+  // Add this new function to handle payment success
+  const handlePaymentSuccess = async (videoKey: string, effectType: string) => {
+    try {
+      setShowPayment(false);
+      setIsProcessing(true);
+      
+      // Start processing timer
+      if (processingTimerRef.current) {
+        clearInterval(processingTimerRef.current);
+      }
+      
+      processingTimerRef.current = setInterval(() => {
+        setElapsedTime(prev => prev + 1);
+      }, 1000);
+      
+      // Queue the video for processing
+      await queueProcessing(videoKey, effectType, userId);
+      
+      // Now we'll poll for completion
+      startPollingForProcessedVideo(videoKey);
+      
+    } catch (error) {
+      console.error("Processing error:", error);
+      setProcessingError(error instanceof Error ? error.message : "An error occurred while processing your video");
+      setIsProcessing(false);
+      
+      if (processingTimerRef.current) {
+        clearInterval(processingTimerRef.current);
+        processingTimerRef.current = null;
+      }
+    }
+  };
+
+  // Add this function to poll for the processed video
+	const startPollingForProcessedVideo = (videoKey: string) => {
+	const filename = videoKey.split('/').pop() || '';
+	const processedKey = `processed/${userId}/${filename}`;
+	
+	// Construct the URL the same way it's done in the My Videos tab
+	const cloudfrontDomain = process.env.NEXT_PUBLIC_CLOUDFRONT_DOMAIN || '';
+	const videoUrl = `https://${cloudfrontDomain}/${processedKey}`;
+	
+	// Set the URL directly without checking first
+	// The video player will show an error if the file doesn't exist yet
+	console.log("Setting video URL to:", videoUrl);
+	setProcessedUrl(videoUrl);
+	
+	// You can still keep the processing state until the video loads
+	const videoElement = document.createElement('video');
+	videoElement.oncanplay = () => {
+		setIsProcessing(false);
+		if (processingTimerRef.current) {
+		clearInterval(processingTimerRef.current);
+		processingTimerRef.current = null;
 		}
+	};
+	
+	videoElement.onerror = () => {
+		// If error, retry in 5 seconds
+		setTimeout(() => {
+		videoElement.src = videoUrl;
+		videoElement.load();
+		}, 5000);
+	};
+	
+	videoElement.src = videoUrl;
+	videoElement.load();
 	};
 
   const handleDrop = useCallback((e: React.DragEvent) => {
@@ -285,6 +328,17 @@ const VideoUpload: React.FC<VideoUploadProps> = ({ onProcessingComplete }) => {
           </label>
         </div>
       </div>
+
+      {/* Payment Modal */}
+      {showPayment && (
+        <PaymentModal
+          amount={selectedEffect === 'scanner-darkly' ? 5.99 : 2.99}
+          effectType={selectedEffect}
+          videoKey={uploadedVideoKey}
+          onClose={() => setShowPayment(false)}
+          onSuccess={handlePaymentSuccess}
+        />
+      )}
     </div>
   );
 };
