@@ -40,7 +40,7 @@ const EffectButton: React.FC<EffectButtonProps> = ({ name, description, isActive
 
 const DashboardLoggedOut: React.FC = () => {
   const { signInWithGoogle } = useAuthContext();
-  const [activeEffect, setActiveEffect] = useState<EffectType>("scanner-darkly");
+  const [activeEffect, setActiveEffect] = useState<EffectType>("silent-movie");
   
   const effectDetails: Record<EffectType, EffectInfo> = {
     "scanner-darkly": {
@@ -124,7 +124,7 @@ const DashboardLoggedOut: React.FC = () => {
                 </div>
                 <div className="aspect-video">
                   <img 
-                    src="/examples/original.jpg" 
+                    src="/example-effects/original.png" 
                     alt="Original video" 
                     className="w-full h-full object-cover"
                   />
@@ -140,7 +140,7 @@ const DashboardLoggedOut: React.FC = () => {
                 </div>
                 <div className="aspect-video">
                   <img 
-                    src={`/examples/${activeEffect}.jpg`} 
+                    src={`/example-effects/${activeEffect}.png`} 
                     alt="Processed video" 
                     className="w-full h-full object-cover"
                   />
